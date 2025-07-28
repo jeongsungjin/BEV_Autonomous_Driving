@@ -1,0 +1,55 @@
+# Large dataset files
+*.npz
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# Checkpoint files
+checkpoints/
+*.pth
+*.ckpt
+*.pt
+
+# Build artifacts
+devel/
+build/
+install/
+*.so
+*.o
+*.a
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test results (PDF files)
+test_results/
+*.pdf
+
+# Temporary files
+*.tmp
+*.temp
+
+# Large data files
+bev_dataset.npz
+yolop.csv
+result.txt 

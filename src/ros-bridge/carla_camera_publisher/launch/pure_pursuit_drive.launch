@@ -1,0 +1,46 @@
+<launch>
+  <!-- Ego vehicle 스폰 (autopilot X, 제어 명령 수신) -->
+  <node pkg="carla_camera_publisher" type="spawn_carla_ego_vehicle.py" name="ego_vehicle_spawner" output="screen"/>
+
+  <!-- YOLOP 추론 -->
+  <node pkg="carla_camera_publisher"
+        type="yolop_inference_node.py"
+        name="yolop"
+        output="screen">        
+    <param name="save_bev" value="false"/>
+    <param name="debug" value="false"/>
+    <param name="da_thresh" value="0.6"/>
+    <param name="ll_thresh" value="0.6"/>
+  </node>
+
+  <!-- A* 경로 플래너 -->
+  <node pkg="carla_camera_publisher"
+        type="astar_path_planner.py"
+        name="astar_planner"
+        output="screen">
+    <param name="goal_row_offset" value="30"/>
+    <param name="num_goal_candidates" value="5"/>
+    <param name="goal_search_half_width" value="0.5"/>
+    <param name="distance_weight" value="0.1"/>
+    <param name="heading_penalty_weight" value="1.0"/>
+    <param name="lateral_penalty_weight" value="0.01"/>
+    <param name="smoothness_weight" value="10.0"/>
+    <param name="avg_cost_weight" value="5.0"/>
+    <param name="cell_cost_weight" value="10.0"/>
+    <param name="smoothing_step" value="0.5"/>
+    <param name="path_extension_cells" value="20"/>
+    <param name="costmap_topic" value="/carla/yolop/costmap"/>
+    <param name="path_topic" value="/planned_path"/>
+  </node>
+
+  <!-- Pure Pursuit 경로 추종 제어 노드 -->
+  <node pkg="carla_camera_publisher"
+        type="Pure_Pursuit.py"
+        name="pure_pursuit_controller"
+        output="screen">
+    <param name="lookahead_distance" value="2.0"/>
+    <param name="max_steer" value="1.0"/>
+    <param name="target_speed" value="5.0"/>
+    <param name="wheelbase" value="2.8"/>
+  </node>
+</launch> 

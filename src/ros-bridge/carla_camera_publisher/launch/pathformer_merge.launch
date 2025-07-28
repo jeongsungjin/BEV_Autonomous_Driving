@@ -1,0 +1,43 @@
+<launch>
+  <!-- 카메라 + 오도메트리 퍼블리셔 -->
+  <node pkg="carla_camera_publisher" type="publish_carla_cam.py" name="cam_pub"/>
+
+  <!-- YOLOP 추론 -->
+  <node pkg="carla_camera_publisher"
+        type="yolop_inference_node.py"
+        name="yolop"
+        output="screen">        
+    <param name="save_bev" value="true"/>
+    <!-- 추가: 마스크 임계값 및 디버깅 플래그 -->
+    <param name="debug" value="true"/>
+    <!-- Drivable area(DA) 확장/축소용 임계값: 0.3~0.9 사이로 조절 -->
+    <param name="da_thresh" value="0.5"/>
+    <!-- 차선(LL) 마스크 임계값 -->
+    <param name="ll_thresh" value="0.5"/>
+  </node>
+
+  <!-- Pathformer 경로 추론 -->
+  <node pkg="carla_camera_publisher" type="pathformer_inference_node.py" name="pathformer" output="screen">
+    <param name="checkpoint_path" value="/home/carla/capstone_2025/pathformer_runs/capstone_tiny_PathFormer_ftbev_dataset_slM_pl8_12/checkpoint.pth"/>
+    <param name="seq_len" value="8"/>
+    <param name="pred_len" value="12"/>
+    <param name="bev_w" value="80"/>
+    <param name="bev_h" value="48"/>
+    <param name="pos_scale" value="30.0"/>
+    <param name="layer_nums" value="1"/>
+    <param name="d_model" value="8"/>
+    <param name="d_ff" value="32"/>
+    <param name="num_experts_list" value="2"/>
+    <param name="patch_size_list" value="4,4,4,2,2,2"/>
+    <param name="debug" value="true"/>
+    <param name="body_frame" value="true"/>
+    <param name="channel_weights" value="1.0,1.0,3.0"/>
+  </node>
+
+  <!-- 위치 CSV 저장 (비활성화) -->
+  
+  <!-- <node pkg="carla_camera_publisher" type="save_pose_csv.py" name="pose_recorder">
+    <param name="output_csv" value="/home/carla/poses.csv"/>
+  </node> -->
+ 
+</launch>

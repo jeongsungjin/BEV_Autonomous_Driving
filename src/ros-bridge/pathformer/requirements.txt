@@ -1,0 +1,16 @@
+einops==0.7.0
+numpy==1.24.4
+pandas==1.5.3
+Pillow==10.1.0
+scikit-learn==1.3.2
+scipy==1.10.1
+torch==1.10.1
+torchaudio==0.10.1
+torchvision==0.11.2
+tornado==6.4
+tqdm==4.66.1
+
+# GPU 환경이라면 아래와 같이 별도 설치하세요 (예시)
+# pip install torch==1.10.1+cu111 torchvision==0.11.2+cu111 torchaudio==0.10.1+cu111 \
+#     --extra-index-url https://download.pytorch.org/whl/cu111
+

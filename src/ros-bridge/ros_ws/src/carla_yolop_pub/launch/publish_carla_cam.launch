@@ -1,0 +1,9 @@
+<launch>
+  <!-- CARLA RGB 탑다운 카메라를 퍼블리시하는 노드 -->
+  <node pkg="carla_yolop_pub" type="publish_carla_cam.py" name="carla_camera_publisher" output="screen">
+    <!-- 필요하다면 매개변수를 오버라이드 -->
+    <param name="host" value="localhost"/>
+    <param name="port" value="2000"/>
+    <param name="image_topic" value="/carla/yolop/image_raw"/>
+  </node>
+</launch> 
