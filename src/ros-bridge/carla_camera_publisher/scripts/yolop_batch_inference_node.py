@@ -53,7 +53,7 @@ class YOLOPBatchInferenceNode:
         self.num_vehicles = 3
 
         # Threshold parameters
-        self.da_thresh = float(rospy.get_param("~da_thresh", 0.53))
+        self.da_thresh = float(rospy.get_param("~da_thresh", 0.5))
         self.ll_thresh = float(rospy.get_param("~ll_thresh", 0.5))
         self.debug = rospy.get_param("~debug", False)
 

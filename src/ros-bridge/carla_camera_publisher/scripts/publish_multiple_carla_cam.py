@@ -131,7 +131,7 @@ class MultipleCarlaCamera:
         # 차량 블루프린트
         vehicle_bp = self.blueprint_library.filter('vehicle.tesla.model3')[0]
         # 차량 색상을 다르게 설정
-        colors = ['255,0,0', '0,255,0', '0,0,255']  # 빨강, 초록, 파랑
+        colors = ['0,0,255', '0,0,255', '0,0,255']  # 빨강, 초록, 파랑
         
         # 카메라 블루프린트
         camera_bp = self.blueprint_library.find('sensor.camera.rgb')
@@ -180,7 +180,7 @@ class MultipleCarlaCamera:
             vehicle.set_autopilot(True, self.traffic_manager.get_port())
             
             # 개별 차량 설정
-            self.traffic_manager.distance_to_leading_vehicle(vehicle, 4.0)  # 앞차와 4m 거리
+            self.traffic_manager.distance_to_leading_vehicle(vehicle, 2.0)  # 앞차와 4m 거리
             self.traffic_manager.vehicle_percentage_speed_difference(vehicle, -10)  # 10% 느리게
             self.traffic_manager.auto_lane_change(vehicle, True)  # 차선 변경 허용
             self.traffic_manager.ignore_lights_percentage(vehicle, 0)  # 신호등 준수
