@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Multiple Carla BEV Camera Publisher -->
+    <node name="multiple_carla_camera_publisher" pkg="carla_camera_publisher" 
+          type="publish_multiple_carla_cam.py" output="screen">
+        <remap from="/carla/vehicle1/image_raw" to="/carla/vehicle1/image_raw"/>
+        <remap from="/carla/vehicle2/image_raw" to="/carla/vehicle2/image_raw"/>
+        <remap from="/carla/vehicle3/image_raw" to="/carla/vehicle3/image_raw"/>
+    </node>
+
+    <!-- Optional: Static transform for global map frame -->
+    <node pkg="tf2_ros" type="static_transform_publisher" name="map_to_world"
+          args="0 0 0 0 0 0 1 world map" />
+
+    <!-- RViz visualization (optional) -->
+    <arg name="use_rviz" default="false"/>
+    <node if="$(arg use_rviz)" name="rviz" pkg="rviz" type="rviz" 
+          args="-d $(find carla_camera_publisher)/config/multiple_bev.rviz" 
+          output="screen"/>
+</launch> 

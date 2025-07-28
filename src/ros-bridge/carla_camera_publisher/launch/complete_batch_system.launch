@@ -1,0 +1,56 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Complete Multi-Vehicle YOLOP Batch System -->
+    
+    <!-- Step 1: Launch Multiple BEV Cameras -->
+    <include file="$(find carla_camera_publisher)/launch/multiple_bev_cameras.launch"/>
+    
+    <!-- Step 2: Launch YOLOP Batch Inference (with delay to ensure cameras are ready) -->
+    <node name="yolop_batch_inference" pkg="carla_camera_publisher" 
+          type="yolop_batch_inference_node.py" output="screen" launch-prefix="bash -c 'sleep 5; $0 $@'">
+        
+        <!-- Model parameters -->
+        <param name="weight_path" value="/home/carla/capstone_2025/src/ros-bridge/YOLOP/weights/epoch-240.pth"/>
+        <param name="conf_thres" value="0.5"/>
+        <param name="iou_thres" value="0.5"/>
+        <param name="da_thresh" value="0.6"/>
+        <param name="ll_thresh" value="0.6"/>
+        
+        <!-- System parameters -->
+        <param name="debug" value="true"/>
+        <param name="enable_costmap" value="true"/>
+        <param name="save_bev" value="false"/>
+        <param name="bev_save_dir" value="$(env HOME)/.ros/bev_rasters_batch"/>
+    </node>
+
+    <!-- Optional: System monitoring -->
+    <arg name="monitor_system" default="false"/>
+    <group if="$(arg monitor_system)">
+        <!-- Monitor ROS topics -->
+        <node name="rostopic_hz_monitor" pkg="rostopic" type="rostopic" 
+              args="hz /carla/vehicle1/image_raw" output="screen"/>
+        
+        <!-- Monitor inference performance -->
+        <node name="rqt_console" pkg="rqt_console" type="rqt_console" output="screen"/>
+        
+        <!-- Optional: Display inference results -->
+        <node name="rqt_image_view_batch" pkg="rqt_image_view" type="rqt_image_view" output="screen"/>
+    </group>
+
+    <!-- Optional: RViz for visualization -->
+    <arg name="use_rviz" default="false"/>
+    <node if="$(arg use_rviz)" name="rviz" pkg="rviz" type="rviz" 
+          args="-d $(find carla_camera_publisher)/config/batch_system.rviz" 
+          output="screen"/>
+
+    <!-- CARLA Cleanup Node (runs in background and cleans up on shutdown) -->
+    <node name="carla_cleanup" pkg="carla_camera_publisher" 
+          type="carla_cleanup.py" output="screen" required="true">
+        <!-- This node will automatically clean up all CARLA actors when the launch file is terminated -->
+    </node>
+
+    <!-- System startup message -->
+    <node name="startup_msg" pkg="rostopic" type="rostopic" 
+          args="pub -1 /system/status std_msgs/String 'Multi-Vehicle YOLOP Batch System Started'"
+          output="screen"/>
+</launch> 
