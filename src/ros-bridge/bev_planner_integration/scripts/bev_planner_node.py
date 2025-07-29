@@ -345,7 +345,7 @@ class BEVPlannerNode:
         
         path_msg = RosPath()
         path_msg.header = header
-        path_msg.header.frame_id = "ego_vehicle/base_link"  # Ego vehicle 기준
+        path_msg.header.frame_id = "ego_vehicle"  # Ego vehicle 기준
         
         for i, (x, y) in enumerate(trajectory):
             pose_stamped = PoseStamped()
@@ -367,7 +367,7 @@ class BEVPlannerNode:
         # 안전성 점수 텍스트
         text_marker = Marker()
         text_marker.header = header
-        text_marker.header.frame_id = "ego_vehicle/base_link"
+        text_marker.header.frame_id = "ego_vehicle"
         text_marker.type = Marker.TEXT_VIEW_FACING
         text_marker.action = Marker.ADD
         text_marker.id = 0

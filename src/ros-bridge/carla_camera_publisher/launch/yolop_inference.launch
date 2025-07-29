@@ -9,8 +9,8 @@
         output="screen">        
     <param name="save_bev" value="false"/>
     <param name="debug" value="false"/>
-    <param name="da_thresh" value="0.5"/>
-    <param name="ll_thresh" value="0.5"/>
+    <param name="da_thresh" value="0.7"/>
+    <param name="ll_thresh" value="0.7"/>
   </node>
 
   <!-- A* 경로 플래너 -->

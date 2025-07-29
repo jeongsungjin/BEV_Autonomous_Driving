@@ -75,6 +75,6 @@
         output="screen"/>
 
   <!-- 로그 정보 -->
-  <param name="/use_sim_time" value="true"/>
+  <param name="/use_sim_time" value="false"/>
   
 </launch> 
