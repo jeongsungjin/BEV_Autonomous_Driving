@@ -46,6 +46,10 @@ def main():
     rospy.init_node("carla_camera_publisher", anonymous=True)
     pub = rospy.Publisher("/carla/yolop/image_raw", Image, queue_size=10)
     cam_info_pub = rospy.Publisher("/carla/yolop/camera_info", CameraInfo, queue_size=10, latch=True)
+    
+    # 각속도 수치 계산용 변수들
+    prev_yaw = None
+    prev_timestamp = None
 
     # --- static transform carla_camera -> carla_camera_optical (REP103) ---
     static_broad = StaticTransformBroadcaster()
@@ -187,9 +191,37 @@ def main():
             orientation=euler_to_quaternion(roll, pitch, yaw),
         )
 
+        # 각속도 계산 (CARLA API + 수치적 백업)
+        angular_vel = vehicle.get_angular_velocity()
+        angular_z = -math.radians(angular_vel.z)  # CARLA → ROS 좌표계 변환
+        
+        # CARLA API가 0을 반환하면 수치적 계산 사용
+        if abs(angular_z) < 1e-6:
+            nonlocal prev_yaw, prev_timestamp
+            current_time = time.time()
+            
+            if prev_yaw is not None and prev_timestamp is not None:
+                dt = current_time - prev_timestamp
+                if dt > 0:
+                    # 각도 차이 계산 (-π ~ π 범위로 정규화)
+                    angle_diff = yaw - prev_yaw
+                    while angle_diff > math.pi:
+                        angle_diff -= 2 * math.pi
+                    while angle_diff < -math.pi:
+                        angle_diff += 2 * math.pi
+                    
+                    angular_z = angle_diff / dt
+            
+            prev_yaw = yaw
+            prev_timestamp = current_time
+        
         odom.twist.twist = Twist(
             linear=Vector3(vel.x, vel.y, vel.z),
-            angular=Vector3(0.0, 0.0, 0.0),
+            angular=Vector3(
+                math.radians(angular_vel.x),
+                -math.radians(angular_vel.y), 
+                angular_z
+            ),
         )
 
         odom_pub.publish(odom)

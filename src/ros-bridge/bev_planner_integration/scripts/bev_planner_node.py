@@ -66,6 +66,8 @@ class BEVPlannerNode:
         self.latest_ego_odometry = None
         self.last_trajectory = None
         
+
+        
         # 통계
         self.inference_count = 0
         self.total_inference_time = 0.0
@@ -125,7 +127,7 @@ class BEVPlannerNode:
         # BEV-Planner
         self.bev_planner = SimplifiedBEVPlanner(
             bev_embed_dim=self.config['adapter']['embed_dim'],
-            ego_embed_dim=self.config['adapter']['embed_dim'],
+            ego_embed_dim=2,  # 실제 ego 데이터 차원에 맞춤
             hidden_dim=512,
             num_future_steps=self.config['planner']['prediction_horizon'],
             max_speed=self.config['planner']['max_speed'],
@@ -135,11 +137,44 @@ class BEVPlannerNode:
         # 안전성 검사기
         self.safety_checker = SafetyChecker()
         
+        # 체크포인트 로드
+        self._load_checkpoint()
+        
         # 평가 모드로 설정
         self.yolop_adapter.eval()
         self.bev_planner.eval()
         
         rospy.loginfo("✅ 모델 초기화 완료")
+    
+    def _load_checkpoint(self):
+        """학습된 체크포인트 로드"""
+        checkpoint_path = "/home/carla/capstone_2025/training_results_v2/checkpoints/best_checkpoint.pth"
+        
+        if os.path.exists(checkpoint_path):
+            try:
+                rospy.loginfo(f"🔄 체크포인트 로드 중: {checkpoint_path}")
+                checkpoint = torch.load(checkpoint_path, map_location=self.device)
+                
+                # 모델 가중치 로드
+                self.yolop_adapter.load_state_dict(checkpoint['adapter_state_dict'])
+                self.bev_planner.load_state_dict(checkpoint['model_state_dict'])
+                
+                # 학습 정보 출력
+                epoch = checkpoint.get('epoch', 'Unknown')
+                val_loss = checkpoint.get('best_val_loss', 'Unknown')
+                global_step = checkpoint.get('global_step', 'Unknown')
+                
+                rospy.loginfo(f"✅ 체크포인트 로드 성공!")
+                rospy.loginfo(f"   - 에포크: {epoch}")
+                rospy.loginfo(f"   - 검증 손실: {val_loss}")
+                rospy.loginfo(f"   - 글로벌 스텝: {global_step}")
+                
+            except Exception as e:
+                rospy.logwarn(f"⚠️  체크포인트 로드 실패: {e}")
+                rospy.logwarn("   - 랜덤 가중치로 시작합니다")
+        else:
+            rospy.logwarn(f"⚠️  체크포인트 없음: {checkpoint_path}")
+            rospy.logwarn("   - 랜덤 가중치로 시작합니다")
     
     def _setup_ros_communication(self):
         """ROS 토픽 및 서비스 설정"""
@@ -162,6 +197,8 @@ class BEVPlannerNode:
             topics['ego_odometry'], Odometry,
             self._ego_odom_callback, queue_size=1
         )
+        
+
         
         # 발행자들
         self.pub_trajectory = rospy.Publisher(
@@ -192,6 +229,8 @@ class BEVPlannerNode:
         """Lane line grid 콜백"""
         with self.data_lock:
             self.latest_ll_grid = msg
+    
+
     
     def _ego_odom_callback(self, msg: Odometry):
         """Ego vehicle odometry 콜백"""
@@ -273,18 +312,24 @@ class BEVPlannerNode:
             
             # 3. 모델 추론
             with torch.no_grad():
-                # YOLOP 어댑터
+                # YOLOP 어댑터 (ego_status 없이 실행)
                 adapter_output = self.yolop_adapter(
                     det_tensor.to(self.device),
                     da_tensor.to(self.device), 
                     ll_tensor.to(self.device),
-                    ego_status
+                    ego_status=None  # ego_status를 전달하지 않음
                 )
+                
+                # Ego features를 직접 생성 (학습 시와 동일한 형태)
+                velocity_magnitude = np.sqrt(ego_status['velocity'][0]**2 + ego_status['velocity'][1]**2)
+                ego_tensor = torch.tensor([
+                    [velocity_magnitude, ego_status['yaw_rate']]  # [velocity_magnitude, angular_velocity]
+                ], dtype=torch.float32).to(self.device)
                 
                 # BEV-Planner
                 planning_output = self.bev_planner(
                     adapter_output['bev_features'],
-                    adapter_output['ego_features']
+                    ego_tensor  # 직접 생성한 ego tensor 사용
                 )
                 
                 # 안전성 평가
@@ -322,14 +367,25 @@ class BEVPlannerNode:
         velocity_x = twist.linear.x
         velocity_y = twist.linear.y
         
-        # 각속도
+        # 각속도 (이미 학습된 모델이므로 odometry에서 바로 사용)
         yaw_rate = twist.angular.z
         
-        # 조향각 추정 (단순화)
-        steering = yaw_rate * 0.1  # 간단한 추정
+        # 조향각 추정 (차량 동역학 기반)
+        # 단순한 자전거 모델: steering ≈ yaw_rate * wheelbase / velocity
+        velocity_magnitude = np.sqrt(velocity_x**2 + velocity_y**2)
+        if velocity_magnitude > 0.1:  # 정지 상태가 아닐 때만
+            wheelbase = 2.5  # CARLA 기본 차량 휠베이스 (m)
+            steering = yaw_rate * wheelbase / velocity_magnitude
+            steering = np.clip(steering, -0.5, 0.5)  # 조향각 제한
+        else:
+            steering = 0.0
         
         # 가속도 (이전 속도와 비교, 여기서는 0으로 설정)
         acceleration = 0.0
+        
+        # 디버깅용 로그 (각속도 모니터링)
+        if abs(yaw_rate) > 0.01:  # 각속도가 있을 때만 로그
+            rospy.logdebug(f"🔄 각속도 감지: {yaw_rate:.3f} rad/s, 조향각: {steering:.3f}")
         
         return {
             'velocity': [velocity_x, velocity_y],
@@ -415,6 +471,8 @@ class BEVPlannerNode:
             'avg_safety_score': np.mean(self.safety_scores) if self.safety_scores else 0.0,
             'has_latest_trajectory': self.last_trajectory is not None
         }
+    
+
 
 
 def main():

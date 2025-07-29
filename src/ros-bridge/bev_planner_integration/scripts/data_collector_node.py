@@ -28,22 +28,27 @@ class BEVPlannerDataCollector:
         os.makedirs(self.data_dir, exist_ok=True)
         
         # 데이터 버퍼
-        self.data_buffer = deque(maxlen=10000)  # 최대 10,000개 샘플
         self.current_sample = {}
+        self.data_buffer = deque(maxlen=10000)  # 메인 데이터 버퍼
+        self.samples_buffer = []
+        self.buffer_size = 100
+        self.min_velocity = 1.0  # 최소 속도 (m/s) - 정지 상태 데이터 배제 강화
         
-        # 동기화를 위한 타임스탬프 허용 오차 (초)
-        self.time_tolerance = 0.1
+        # 궤적 추적용 히스토리
+        self.ego_history = deque(maxlen=50)  # 최대 50개 포즈 저장
         
-        # 데이터 저장 주기 (초)
-        self.save_interval = 30
+        # 각속도 계산용: 이전 프레임 정보 저장
+        self.prev_pose = None
+        self.prev_timestamp = None
         
-        # 최소 속도 (정지 상태 데이터는 제외)
-        self.min_velocity = 0.5  # m/s
+        # IMU에서 받은 각속도 (더 정확함)
+        self.imu_angular_velocity = 0.0
+        self.use_imu_angular_velocity = False  # 수치적 계산 우선 사용 (IMU 토픽 없음)
         
-        rospy.loginfo("🗂️  BEV-Planner 데이터 수집기 시작")
-        rospy.loginfo(f"📁 데이터 저장 경로: {self.data_dir}")
+        # 데이터 동기화를 위한 잠금
+        self.data_lock = threading.Lock()
         
-        # ROS 구독자 설정
+        # ROS 구독자들
         self.setup_subscribers()
         
         # TF 리스너
@@ -51,24 +56,38 @@ class BEVPlannerDataCollector:
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         
         # 데이터 저장 타이머
-        self.save_timer = rospy.Timer(rospy.Duration(self.save_interval), self.save_data_callback)
+        self.save_timer = rospy.Timer(rospy.Duration(30), self.save_data_callback)
         
         rospy.loginfo("✅ 데이터 수집기 초기화 완료")
         rospy.loginfo("🎯 CARLA에서 운전하면 데이터가 자동 수집됩니다!")
         
     def setup_subscribers(self):
         """ROS 구독자 설정"""
-        # YOLOP 출력
-        rospy.Subscriber('/carla/yolop/det_grid', OccupancyGrid, self.det_callback)
-        rospy.Subscriber('/carla/yolop/da_grid', OccupancyGrid, self.da_callback)
-        rospy.Subscriber('/carla/yolop/ll_grid', OccupancyGrid, self.ll_callback)
+        # YOLOP BEV 그리드 구독
+        self.det_sub = rospy.Subscriber(
+            "/carla/yolop/det_grid", OccupancyGrid, self.det_callback, queue_size=1
+        )
+        self.da_sub = rospy.Subscriber(
+            "/carla/yolop/da_grid", OccupancyGrid, self.da_callback, queue_size=1
+        )
+        self.ll_sub = rospy.Subscriber(
+            "/carla/yolop/ll_grid", OccupancyGrid, self.ll_callback, queue_size=1
+        )
         
-        # 차량 상태
-        rospy.Subscriber('/carla/ego_vehicle/odometry', Odometry, self.odometry_callback)
+        # Ego vehicle 상태 구독
+        self.odom_sub = rospy.Subscriber(
+            "/carla/ego_vehicle/odometry", Odometry, self.odometry_callback, queue_size=1
+        )
+        
+        # IMU 센서 구독 (각속도 정보용)
+        from sensor_msgs.msg import Imu
+        self.imu_sub = rospy.Subscriber(
+            "/carla/ego_vehicle/imu", Imu, self.imu_callback, queue_size=1
+        )
         
         # Expert trajectory (실제 운전 경로)
         # 현재는 odometry 기반으로 미래 경로를 추정
-        self.ego_history = deque(maxlen=20)  # 최근 20개 포즈 저장
+        # self.ego_history = deque(maxlen=20)  # 최근 20개 포즈 저장
         
         rospy.loginfo("📡 ROS 구독자 설정 완료")
         
@@ -90,6 +109,11 @@ class BEVPlannerDataCollector:
         self.current_sample['ll_timestamp'] = msg.header.stamp.to_sec()
         self.check_and_save_sample()
         
+    def imu_callback(self, msg):
+        """IMU 센서 콜백 - 각속도 정보 업데이트"""
+        # IMU의 gyroscope z축이 yaw rate (각속도)
+        self.imu_angular_velocity = msg.angular_velocity.z
+        
     def odometry_callback(self, msg):
         """차량 상태 콜백"""
         # 현재 속도 계산
@@ -98,13 +122,24 @@ class BEVPlannerDataCollector:
             msg.twist.twist.linear.y**2
         )
         
-        # 정지 상태면 데이터 수집 안함
+        # 정지 상태나 너무 느린 상태면 데이터 수집 안함
         if velocity < self.min_velocity:
             return
             
+        # 각속도 계산 (IMU 우선, 수치적 방법 백업)
+        if self.use_imu_angular_velocity:
+            angular_velocity = self.imu_angular_velocity
+        else:
+            angular_velocity = self.calculate_angular_velocity(msg)
+            
+        # 각속도 값이 비정상적으로 클 때도 제외 (센서 오류)
+        if abs(angular_velocity) > 2.0:  # 2 rad/s 이상은 비현실적
+            rospy.logwarn(f"⚠️  비정상적인 각속도 감지: {angular_velocity:.3f} rad/s - 샘플 제외")
+            return
+        
         # Ego status 저장
         self.current_sample['ego_velocity'] = velocity
-        self.current_sample['ego_angular_velocity'] = msg.twist.twist.angular.z
+        self.current_sample['ego_angular_velocity'] = angular_velocity
         self.current_sample['ego_pose'] = [
             msg.pose.pose.position.x,
             msg.pose.pose.position.y,
@@ -112,6 +147,14 @@ class BEVPlannerDataCollector:
             msg.pose.pose.orientation.w
         ]
         self.current_sample['ego_timestamp'] = msg.header.stamp.to_sec()
+        
+        # 데이터 품질 로그 출력 (odometry_callback에서만)
+        if len(self.data_buffer) % 25 == 0 and len(self.data_buffer) > 0:
+            rospy.loginfo(
+                f"🚗 주행 상태 - 속도: {velocity:.2f} m/s, "
+                f"각속도: {angular_velocity:.3f} rad/s, "
+                f"수집된 샘플: {len(self.data_buffer)}"
+            )
         
         # 포즈 히스토리 업데이트
         current_pose = (
@@ -127,6 +170,55 @@ class BEVPlannerDataCollector:
             self.current_sample['expert_trajectory'] = future_trajectory
             
         self.check_and_save_sample()
+        
+    def calculate_angular_velocity(self, msg):
+        """
+        이전 프레임과 현재 프레임의 orientation 차이로부터 각속도를 수치적으로 계산
+        
+        Args:
+            msg: nav_msgs/Odometry 메시지
+            
+        Returns:
+            float: 계산된 각속도 (rad/s)
+        """
+        current_timestamp = msg.header.stamp.to_sec()
+        
+        # 현재 yaw angle 계산 (quaternion -> euler)
+        import tf.transformations as tft
+        orientation = msg.pose.pose.orientation
+        current_yaw = tft.euler_from_quaternion([
+            orientation.x, orientation.y, orientation.z, orientation.w
+        ])[2]  # yaw는 index 2
+        
+        # 이전 프레임이 없으면 0 반환
+        if self.prev_pose is None or self.prev_timestamp is None:
+            self.prev_pose = current_yaw
+            self.prev_timestamp = current_timestamp
+            return 0.0
+        
+        # 시간 차이 계산
+        dt = current_timestamp - self.prev_timestamp
+        
+        if dt <= 0:  # 시간이 역행하거나 같으면 0 반환
+            return 0.0
+        
+        # 각도 차이 계산 (-π ~ π 범위로 정규화)
+        angle_diff = current_yaw - self.prev_pose
+        
+        # 각도 차이를 -π ~ π 범위로 정규화
+        while angle_diff > np.pi:
+            angle_diff -= 2 * np.pi
+        while angle_diff < -np.pi:
+            angle_diff += 2 * np.pi
+        
+        # 각속도 계산
+        angular_velocity = angle_diff / dt
+        
+        # 현재 값을 이전 값으로 저장
+        self.prev_pose = current_yaw
+        self.prev_timestamp = current_timestamp
+        
+        return angular_velocity
         
     def occupancy_grid_to_array(self, grid_msg):
         """OccupancyGrid를 numpy 배열로 변환"""
@@ -208,7 +300,7 @@ class BEVPlannerDataCollector:
             self.current_sample.get('ego_timestamp', 0)
         ]
         
-        if max(timestamps) - min(timestamps) > self.time_tolerance:
+        if max(timestamps) - min(timestamps) > 0.1: # 오차 허용 시간 조정
             return  # 동기화되지 않음
             
         # 샘플 복사 및 버퍼에 추가
@@ -217,8 +309,8 @@ class BEVPlannerDataCollector:
         
         self.data_buffer.append(sample)
         
-        # 로그 출력
-        if len(self.data_buffer) % 100 == 0:
+        # 로그 출력 (간단한 정보만)
+        if len(self.data_buffer) % 50 == 0:  # 더 자주 로그 출력
             rospy.loginfo(f"📊 수집된 샘플 수: {len(self.data_buffer)}")
             
         # 현재 샘플 초기화

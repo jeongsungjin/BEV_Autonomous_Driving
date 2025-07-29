@@ -23,6 +23,9 @@ include_directories(
 catkin_install_python(PROGRAMS
   scripts/bev_planner_node.py
   scripts/trajectory_visualizer_node.py
+  scripts/data_collector_node.py
+  scripts/train_bev_planner.py
+  scripts/test_angular_velocity.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

@@ -13,6 +13,12 @@ planner:
   time_step: 0.5         # 각 스텝의 시간 간격 (초)
   max_speed: 15.0        # 최대 속도 (m/s)
   safety_margin: 2.0     # 안전 여유거리 (m)
+
+# 각속도 계산 설정 (데이터 수집용)
+angular_velocity:
+  use_imu: true                    # IMU 센서 사용 여부 (데이터 수집 시에만)
+  use_numerical_backup: true       # 수치적 계산 백업 사용
+  max_angular_velocity: 2.0        # 최대 각속도 제한 (rad/s)
   
 # CARLA Environment Settings
 carla:
@@ -22,6 +28,7 @@ carla:
     yolop_da_grid: "/carla/yolop/da_grid" 
     yolop_ll_grid: "/carla/yolop/ll_grid"
     ego_odometry: "/carla/ego_vehicle/odometry"
+    ego_imu: "/carla/ego_vehicle/imu"           # IMU 토픽 추가
     planned_trajectory: "/bev_planner/planned_trajectory"
     debug_visualization: "/bev_planner/debug_vis"
     
