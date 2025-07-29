@@ -14,30 +14,30 @@
   </node>
 
   <!-- A* 경로 플래너 -->
-  <node pkg="carla_camera_publisher"
+  <!-- <node pkg="carla_camera_publisher"
         type="astar_path_planner.py"
         name="astar_planner"
-        output="screen">
+        output="screen"> -->
     
     <!-- 주행 관련 파라미터 -->
-    <param name="goal_row_offset" value="10"/>
+    <!-- <param name="goal_row_offset" value="10"/>
     <param name="num_goal_candidates" value="5"/>
-    <param name="goal_search_half_width" value="0.25"/>
+    <param name="goal_search_half_width" value="0.25"/> -->
 
     <!-- 평가 함수 튜닝 파라미터 -->
-    <param name="distance_weight" value="0.1"/>
+    <!-- <param name="distance_weight" value="0.1"/>
     <param name="heading_penalty_weight" value="1.0"/>
     <param name="lateral_penalty_weight" value="0.05"/>
     <param name="smoothness_weight" value="10.0"/>
     <param name="avg_cost_weight" value="5.0"/>
     <param name="cell_cost_weight" value="1.0"/>
     <param name="smoothing_step" value="0.5"/>
-    <param name="path_extension_cells" value="20"/>
+    <param name="path_extension_cells" value="20"/> -->
 
     <!-- 토픽 이름 설정 -->
-    <param name="costmap_topic" value="/carla/yolop/costmap"/>
+    <!-- <param name="costmap_topic" value="/carla/yolop/costmap"/>
     <param name="path_topic" value="/planned_path"/>
-  </node>
+  </node> -->
 
   <!-- 위치 CSV 저장 (비활성화) -->
   <!--

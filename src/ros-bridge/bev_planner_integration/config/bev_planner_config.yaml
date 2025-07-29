@@ -1,0 +1,61 @@
+# BEV-Planner Integration Configuration
+
+# YOLOP Adapter Settings
+adapter:
+  input_height: 48
+  input_width: 80
+  embed_dim: 256
+  use_positional_encoding: true
+
+# BEV Planning Settings  
+planner:
+  prediction_horizon: 6  # 예측 스텝 수
+  time_step: 0.5         # 각 스텝의 시간 간격 (초)
+  max_speed: 15.0        # 최대 속도 (m/s)
+  safety_margin: 2.0     # 안전 여유거리 (m)
+  
+# CARLA Environment Settings
+carla:
+  # ROS Topics
+  topics:
+    yolop_det_grid: "/carla/yolop/det_grid"
+    yolop_da_grid: "/carla/yolop/da_grid" 
+    yolop_ll_grid: "/carla/yolop/ll_grid"
+    ego_odometry: "/carla/ego_vehicle/odometry"
+    planned_trajectory: "/bev_planner/planned_trajectory"
+    debug_visualization: "/bev_planner/debug_vis"
+    
+  # Coordinate Frames
+  frames:
+    map_frame: "map"
+    base_link_frame: "ego_vehicle/base_link"
+    camera_frame: "ego_vehicle/camera"
+
+# Model Settings
+model:
+  # Checkpoints
+  checkpoint_dir: "checkpoints/"
+  save_interval: 100  # 체크포인트 저장 간격
+  
+  # Training (if applicable)
+  learning_rate: 0.0001
+  batch_size: 4
+  device: "cuda"  # "cuda" or "cpu"
+
+# Visualization Settings
+visualization:
+  enable_debug_viz: true
+  trajectory_color: [0, 1, 0]      # RGB, 초록색
+  obstacle_color: [1, 0, 0]        # RGB, 빨간색  
+  drivable_area_color: [0, 0, 1]   # RGB, 파란색
+  
+# Performance Settings
+performance:
+  target_fps: 30
+  max_processing_time: 0.03  # 최대 처리 시간 (초)
+  
+# Safety Settings
+safety:
+  emergency_brake_distance: 5.0    # 긴급 제동 거리 (m)
+  lane_keeping_weight: 1.0         # 차선 유지 가중치
+  collision_avoidance_weight: 2.0  # 충돌 회피 가중치 
