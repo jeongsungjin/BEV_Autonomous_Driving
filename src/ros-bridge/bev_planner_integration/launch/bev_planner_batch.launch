@@ -1,0 +1,95 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- BEV-Planner Batch Inference Launch File -->
+  <!-- 3대 차량에 대한 YOLOP + BEV-Planner 배치 추론 시스템 -->
+
+  <!-- 파라미터 설정 -->
+  <arg name="debug" default="false" doc="Enable debug mode with detailed logging"/>
+  <arg name="use_gpu" default="true" doc="Use GPU for inference if available"/>
+  <arg name="target_fps" default="30" doc="Target planning frequency"/>
+  <arg name="namespace" default="bev_planner_batch" doc="Node namespace"/>
+
+  <!-- BEV-Planner 배치 추론 메인 노드 -->
+  <node pkg="bev_planner_integration" 
+        type="bev_planner_batch_node.py" 
+        name="bev_planner_batch_node"
+        ns="$(arg namespace)"
+        output="screen"
+        respawn="true">
+    
+    <!-- 기본 파라미터 -->
+    <param name="debug" value="$(arg debug)"/>
+    <param name="target_fps" value="$(arg target_fps)"/>
+    <param name="use_gpu" value="$(arg use_gpu)"/>
+    <param name="use_random_weights" value="false"/>
+    
+    <!-- YOLOP 토픽 설정 (각 차량별) - 기본값 설정 -->
+    <remap from="yolop_det_grid" to="/carla/vehicle1/yolop/det_grid"/>
+    <remap from="yolop_da_grid" to="/carla/vehicle1/yolop/da_grid"/>
+    <remap from="yolop_ll_grid" to="/carla/vehicle1/yolop/ll_grid"/>
+    
+    <!-- CARLA 토픽 설정 (각 차량별) - 기본값 설정 -->
+    <remap from="ego_odometry" to="/carla/vehicle1/odometry"/>
+    
+    <!-- 출력 토픽 설정 (각 차량별) - 기본값 설정 -->
+    <remap from="planned_trajectory" to="/$(arg namespace)/vehicle1/planned_trajectory"/>
+    <remap from="debug_visualization" to="/$(arg namespace)/vehicle1/debug_vis"/>
+  </node>
+
+  <!-- 궤적 시각화 노드들 (각 차량별) -->
+  <group ns="$(arg namespace)">
+    <node pkg="bev_planner_integration"
+          type="trajectory_visualizer_node.py"
+          name="trajectory_visualizer_v1"
+          output="screen">
+      
+      <!-- 입력 토픽 -->
+      <remap from="planned_trajectory" to="/$(arg namespace)/vehicle1/planned_trajectory"/>
+      <remap from="ego_odometry" to="/carla/vehicle1/odometry"/>
+      
+      <!-- 출력 토픽 -->
+      <remap from="trajectory_markers" to="/$(arg namespace)/vehicle1/trajectory_markers"/>
+      <remap from="safety_indicators" to="/$(arg namespace)/vehicle1/safety_indicators"/>
+    </node>
+
+    <node pkg="bev_planner_integration"
+          type="trajectory_visualizer_node.py"
+          name="trajectory_visualizer_v2"
+          output="screen">
+      
+      <!-- 입력 토픽 -->
+      <remap from="planned_trajectory" to="/$(arg namespace)/vehicle2/planned_trajectory"/>
+      <remap from="ego_odometry" to="/carla/vehicle2/odometry"/>
+      
+      <!-- 출력 토픽 -->
+      <remap from="trajectory_markers" to="/$(arg namespace)/vehicle2/trajectory_markers"/>
+      <remap from="safety_indicators" to="/$(arg namespace)/vehicle2/safety_indicators"/>
+    </node>
+
+    <node pkg="bev_planner_integration"
+          type="trajectory_visualizer_node.py"
+          name="trajectory_visualizer_v3"
+          output="screen">
+      
+      <!-- 입력 토픽 -->
+      <remap from="planned_trajectory" to="/$(arg namespace)/vehicle3/planned_trajectory"/>
+      <remap from="ego_odometry" to="/carla/vehicle3/odometry"/>
+      
+      <!-- 출력 토픽 -->
+      <remap from="trajectory_markers" to="/$(arg namespace)/vehicle3/trajectory_markers"/>
+      <remap from="safety_indicators" to="/$(arg namespace)/vehicle3/safety_indicators"/>
+    </node>
+  </group>
+
+  <!-- RViz 시각화 (선택적) -->
+  <arg name="rviz" default="false" doc="Launch RViz for visualization"/>
+  <node if="$(arg rviz)" 
+        pkg="rviz" 
+        type="rviz" 
+        name="rviz"
+        output="screen"/>
+
+  <!-- 로그 정보 -->
+  <param name="/use_sim_time" value="false"/>
+  
+</launch> 

@@ -1,31 +1,26 @@
 <?xml version="1.0"?>
 <launch>
-    <!-- YOLOP Batch Inference Node -->
-    <node name="yolop_batch_inference" pkg="carla_camera_publisher" 
-          type="yolop_batch_inference_node.py" output="screen">
-        
-        <!-- Model parameters -->
-        <param name="weight_path" value="/home/carla/capstone_2025/src/ros-bridge/YOLOP/weights/epoch-240.pth"/>
-        <param name="conf_thres" value="0.5"/>
-        <param name="iou_thres" value="0.45"/>
-        <param name="da_thresh" value="0.53"/>
-        <param name="ll_thresh" value="0.5"/>
-        
-        <!-- System parameters -->
-        <param name="debug" value="false"/>
-        <param name="enable_costmap" value="true"/>
-        <param name="save_bev" value="false"/>
-        <param name="bev_save_dir" value="$(env HOME)/.ros/bev_rasters_batch"/>
-    </node>
+  <!-- 다중 차량 카메라 + 오도메트리 퍼블리셔 -->
+  <node pkg="carla_camera_publisher" type="publish_multiple_carla_cam.py" name="multi_cam_pub"/>
 
-    <!-- Optional: Run RQT Image View for monitoring -->
-    <arg name="monitor_images" default="false"/>
-    <group if="$(arg monitor_images)">
-        <node name="rqt_image_view_v1" pkg="rqt_image_view" type="rqt_image_view" 
-              args="/carla/vehicle1/yolop/inference" output="screen"/>
-        <node name="rqt_image_view_v2" pkg="rqt_image_view" type="rqt_image_view" 
-              args="/carla/vehicle2/yolop/inference" output="screen"/>
-        <node name="rqt_image_view_v3" pkg="rqt_image_view" type="rqt_image_view" 
-              args="/carla/vehicle3/yolop/inference" output="screen"/>
-    </group>
+  <!-- YOLOP 배치 추론 -->
+  <node pkg="carla_camera_publisher"
+        type="yolop_batch_inference_node.py"
+        name="yolop_batch"
+        output="screen">        
+    <param name="save_bev" value="false"/>
+    <param name="debug" value="false"/>
+    <param name="da_thresh" value="0.53"/>
+    <param name="ll_thresh" value="0.5"/>
+    <param name="enable_costmap" value="true"/>
+  </node>
+
+  <!-- A* 경로 플래너 (선택사항) -->
+  <!-- <node pkg="carla_camera_publisher"
+        type="astar_path_planner.py"
+        name="astar_planner"
+        output="screen">
+    <param name="costmap_topic" value="/carla/vehicle1/yolop/costmap"/>
+    <param name="path_topic" value="/planned_path"/>
+  </node> -->
 </launch> 

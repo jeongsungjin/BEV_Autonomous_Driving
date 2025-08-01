@@ -52,9 +52,11 @@ class YOLOPBatchInferenceNode:
         self.input_size = tuple(cfg.MODEL.IMAGE_SIZE)
         self.num_vehicles = 3
 
-        # Threshold parameters
-        self.da_thresh = float(rospy.get_param("~da_thresh", 0.5))
-        self.ll_thresh = float(rospy.get_param("~ll_thresh", 0.5))
+        # --- additional params for BEV mask tuning ---
+        self.da_thresh = float(rospy.get_param("~da_thresh", 0.53))  # drivable area prob threshold
+        self.ll_thresh = float(rospy.get_param("~ll_thresh", 0.5))  # lane line prob threshold
+
+        # global debug flag
         self.debug = rospy.get_param("~debug", False)
 
         # 모델 초기화
@@ -76,11 +78,16 @@ class YOLOPBatchInferenceNode:
             self.image_subs.append(sub)
             rospy.loginfo(f"Subscribed to {topic_name}")
 
-        # 시간 동기화 (0.1초 허용 오차)
+        # 시간 동기화 (더 관대한 허용 오차로 설정)
         self.sync = message_filters.ApproximateTimeSynchronizer(
             self.image_subs, queue_size=10, slop=0.1, allow_headerless=True
         )
         self.sync.registerCallback(self.synchronized_callback)
+        
+        # 디버깅을 위한 개별 콜백도 등록 (필요시 활성화)
+        # for i, sub in enumerate(self.image_subs):
+        #     vehicle_id = i + 1
+        #     sub.registerCallback(lambda msg, vid=vehicle_id: self._debug_image_callback(msg, vid))
 
         # === Waypoint overlay 준비 ===
         self.latest_paths = [None] * self.num_vehicles  # type: List[RosPath]
@@ -110,6 +117,9 @@ class YOLOPBatchInferenceNode:
         self.ll_pubs = []
         self.costmap_pubs = []
 
+        # --- costmap 모드용 퍼블리셔(통합 OccupancyGrid) ---
+        self.enable_costmap = rospy.get_param("~enable_costmap", True)
+
         for i in range(self.num_vehicles):
             vehicle_id = i + 1
             self.vis_pubs.append(
@@ -126,7 +136,6 @@ class YOLOPBatchInferenceNode:
             )
             
             # 통합 costmap
-            self.enable_costmap = rospy.get_param("~enable_costmap", True)
             if self.enable_costmap:
                 self.costmap_pubs.append(
                     rospy.Publisher(f"/carla/vehicle{vehicle_id}/yolop/costmap", OccupancyGrid, queue_size=10)
@@ -165,22 +174,31 @@ class YOLOPBatchInferenceNode:
         rospy.loginfo("YOLOP 모델 가중치 로드 완료")
         return model
 
+    def _debug_image_callback(self, msg: Image, vehicle_id: int):
+        """개별 이미지 메시지 디버깅용 콜백"""
+        rospy.loginfo(f"[DEBUG] Vehicle {vehicle_id} 이미지 수신: stamp={msg.header.stamp.to_sec():.3f}")
+
     def _camerainfo_callback(self, msg: CameraInfo, vehicle_id: int):
         self.camera_infos[vehicle_id - 1] = msg
+        # rospy.loginfo(f"[DEBUG] Vehicle {vehicle_id} 카메라 정보 수신")
 
     def _path_callback(self, msg: RosPath):
         # 모든 차량이 같은 경로를 공유한다고 가정
         for i in range(self.num_vehicles):
             self.latest_paths[i] = msg
+        # rospy.loginfo(f"[DEBUG] 경로 메시지 수신: {len(msg.poses)} 개 waypoints")
 
     def _smooth_path_callback(self, msg: RosPath):
         # 모든 차량이 같은 smooth 경로를 공유한다고 가정
         for i in range(self.num_vehicles):
             self.latest_smooth_paths[i] = msg
+        # rospy.loginfo(f"[DEBUG] Smooth 경로 메시지 수신: {len(msg.poses)} 개 waypoints")
 
     def synchronized_callback(self, *image_msgs):
         """시간 동기화된 이미지들을 받아서 배치 추론 수행"""
         start_time = time.time()
+        
+        # rospy.loginfo(f"[SYNC] 동기화된 이미지 {len(image_msgs)}개 수신")
         
         if len(image_msgs) != self.num_vehicles:
             rospy.logwarn(f"Expected {self.num_vehicles} images, got {len(image_msgs)}")
@@ -395,10 +413,10 @@ class YOLOPBatchInferenceNode:
         vertical_kernel = np.ones((15, 3), np.uint8)
         da_bin = cv2.dilate(da_bin, vertical_kernel, iterations=3)
 
-        if self.debug:
-            rospy.loginfo(
-                f"[YOLOP-V{vehicle_id}] mask ratios det={det_mask.mean():.3f} da={da_bin.mean():.3f} ll={ll_bin.mean():.3f}"
-            )
+        # if self.debug:
+        #     rospy.loginfo(
+        #         f"[YOLOP-V{vehicle_id}] mask ratios det={det_mask.mean():.3f} da={da_bin.mean():.3f} ll={ll_bin.mean():.3f}"
+        #     )
 
         # === 시각화 ===
         # 색상 합성
@@ -421,39 +439,71 @@ class YOLOPBatchInferenceNode:
         # Waypoint 오버레이
         vis_img = self._overlay_waypoints(vis_img, header, vehicle_id)
 
-        # === OccupancyGrid 생성 ===
-        det_grid_msg = self._build_occupancy_grid(det_mask, header.stamp, "map")
-        da_occ_mask = np.where(da_bin == 1, 0, 1).astype(np.uint8)
-        da_grid_msg = self._build_occupancy_grid(da_occ_mask, header.stamp, "map")
-        ll_grid_msg = self._build_occupancy_grid(ll_bin, header.stamp, "map")
+        # 좌표계 정합: 원본 그대로 사용해서 실제 환경 확인
+        # 회전 없이 YOLOP 원본 BEV 그리드 사용
+        det_mask_rotated = det_mask.copy()  # 회전 없음
+        da_bin_rotated = da_bin.copy()
+        ll_bin_rotated = ll_bin.copy()
+        
+        # OccupancyGrid 메시지 생성 (ego_vehicle 프레임으로 통일)
+        det_grid_msg = self._build_occupancy_grid(det_mask_rotated, header.stamp, "ego_vehicle", occupied_val=100, free_val=0)
+        # DA: 주행 가능 영역은 free(0), 그 외는 occupied(100)
+        da_occ_mask = np.where(da_bin_rotated == 1, 0, 1).astype(np.uint8)
+        da_grid_msg = self._build_occupancy_grid(da_occ_mask, header.stamp, "ego_vehicle", occupied_val=100, free_val=0)
+        # LL: 차선은 occupied(100)로 표현
+        ll_grid_msg = self._build_occupancy_grid(ll_bin_rotated, header.stamp, "ego_vehicle", occupied_val=100, free_val=0)
 
-        # === 통합 Costmap ===
+        # === 통합 Costmap OccupancyGrid 생성 ===
         if self.enable_costmap and vehicle_id <= len(self.costmap_pubs):
-            combined_mask = np.full(det_mask.shape, 99, dtype=np.int8)
-            
+            # 회전된 마스크 사용
+            combined_mask = np.full(det_mask_rotated.shape, 99, dtype=np.int8)
+
+            # 1) Drivable Area (DA): 내부 0, 경계 90
             kernel3 = np.ones((3, 3), np.uint8)
-            da_eroded = cv2.erode(da_bin, kernel3, iterations=2)
-            da_border = cv2.bitwise_and(da_bin, cv2.bitwise_not(da_eroded))
+            da_eroded = cv2.erode(da_bin_rotated, kernel3, iterations=2)
+            da_border = cv2.bitwise_and(da_bin_rotated, cv2.bitwise_not(da_eroded))
 
-            combined_mask[da_eroded == 1] = 0
-            combined_mask[da_border == 1] = 90
+            combined_mask[da_eroded == 1] = 0      # 자유 공간
+            combined_mask[da_border == 1] = 90     # 경계부 cost ↑
 
-            ll_dilated = cv2.dilate(ll_bin, kernel3, iterations=1)
+            # 2) Lane Line (LL): 장애물과 동일하게 100
+            ll_dilated = cv2.dilate(ll_bin_rotated, kernel3, iterations=1)
             combined_mask[ll_dilated == 1] = 100
 
-            det_dilated = cv2.dilate(det_mask, kernel3, iterations=2)
+            # 3) Detection (Det): 장애물 100
+            det_dilated = cv2.dilate(det_mask_rotated, kernel3, iterations=2)
             combined_mask[det_dilated == 1] = 100
 
-            # Ego vehicle 중앙 박스 → 자유 공간으로 설정
-            combined_mask[cy-box_h//2:cy+box_h//2, cx-box_w//2:cx+box_w//2] = 0
+            # 4) Ego vehicle 중앙 박스 → DA(0)로 강제 설정 (임시)
+            box_w, box_h = 30, 50
+            h_cm, w_cm = combined_mask.shape
+            cx_cm, cy_cm = w_cm // 2, h_cm // 2
+            tl_x, tl_y = cx_cm - box_w // 2, cy_cm - box_h // 2
+            br_x, br_y = cx_cm + box_w // 2, cy_cm + box_h // 2
+            combined_mask[tl_y:br_y, tl_x:br_x] = 0
 
-            costmap_msg = self._build_occupancy_grid_direct(combined_mask, header.stamp, "map")
+            meta = MapMetaData()
+            meta.map_load_time = rospy.Time.now()
+            meta.resolution = 1.0
+            meta.width = combined_mask.shape[1]
+            meta.height = combined_mask.shape[0]
+            meta.origin = Pose(
+                position=Point(0.0, 0.0, 0.0),
+                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            )
+
+            costmap_msg = OccupancyGrid()
+            costmap_msg.header.stamp = header.stamp
+            costmap_msg.header.frame_id = "ego_vehicle"  # 다른 그리드들과 프레임 통일
+            costmap_msg.info = meta
+            costmap_msg.data = combined_mask.flatten().tolist()
             self.costmap_pubs[vehicle_id - 1].publish(costmap_msg)
 
         # === BEV Raster 저장 ===
         if hasattr(self, 'bev_save_dir'):
             try:
-                raster = np.stack([det_mask, da_bin, ll_bin], axis=0).astype(np.uint8)
+                # 좌표계 정합된 회전 마스크 저장
+                raster = np.stack([det_mask_rotated, da_bin_rotated, ll_bin_rotated], axis=0).astype(np.uint8)
                 fname = self.bev_save_dir / f"v{vehicle_id}_{header.stamp.to_sec():.6f}.npy"
                 np.save(fname, raster)
             except Exception as e:
@@ -462,8 +512,8 @@ class YOLOPBatchInferenceNode:
         return vis_img, det_grid_msg, da_grid_msg, ll_grid_msg
 
     def _build_occupancy_grid(self, mask: np.ndarray, header_stamp: rospy.Time, frame_id: str,
-                             occupied_val: int = 100, free_val: int = 0, unknown_val: int = -1) -> OccupancyGrid:
-        """Binary mask를 OccupancyGrid로 변환"""
+                              occupied_val: int = 100, free_val: int = 0, unknown_val: int = -1) -> OccupancyGrid:
+        """Binary/graded mask를 OccupancyGrid 메시지로 변환"""
         h, w = mask.shape
 
         # 값 매핑
@@ -471,18 +521,21 @@ class YOLOPBatchInferenceNode:
         data[mask == 0] = free_val
         data[mask == 1] = occupied_val
 
-        # BEV 그리드 해상도 조정
+        # BEV 그리드 해상도를 80x48로 고정 (Pathformer 모델에 맞춤)
         target_width = 80
         target_height = 48
+        
+        # 마스크를 목표 해상도로 리사이즈
+        import cv2
         data_resized = cv2.resize(data, (target_width, target_height), interpolation=cv2.INTER_NEAREST)
 
         meta = MapMetaData()
         meta.map_load_time = rospy.Time.now()
-        meta.resolution = 1.0
+        meta.resolution = 1.0  # 1 pixel == 1 grid cell
         meta.width = target_width
         meta.height = target_height
         meta.origin = Pose(position=Point(0.0, 0.0, 0.0),
-                          orientation=Quaternion(0.0, 0.0, 0.0, 1.0))
+                           orientation=Quaternion(0.0, 0.0, 0.0, 1.0))
 
         grid = OccupancyGrid()
         grid.header.stamp = header_stamp
@@ -509,13 +562,71 @@ class YOLOPBatchInferenceNode:
         return grid
 
     def _overlay_waypoints(self, img: np.ndarray, header, vehicle_id: int) -> np.ndarray:
-        """Waypoint 오버레이"""
+        """/planned_path 의 waypoints 를 이미지 평면에 투영하여 파란 점으로 표시하고, 곡선 path를 초록색 선으로 표시"""
         if (self.latest_paths[vehicle_id - 1] is None or 
             self.camera_infos[vehicle_id - 1] is None):
             return img
 
         camera_info = self.camera_infos[vehicle_id - 1]
         latest_path = self.latest_paths[vehicle_id - 1]
+
+        # 카메라 내참수
+        K = camera_info.K  # 3x3 row-major list
+        fx, fy = K[0], K[4]
+        cx, cy = K[2], K[5]
+
+        try:
+            # map -> camera transform (at latest available)
+            trans = self.tf_buffer.lookup_transform(
+                header.frame_id,  # target: camera frame
+                latest_path.header.frame_id,  # source: map
+                rospy.Time(0),
+                rospy.Duration(0.05)
+            )
+        except (tf2_ros.LookupException, tf2_ros.ExtrapolationException):
+            return img
+
+        pts_drawn = 0
+        pts_total = len(latest_path.poses)
+        skipped_z = 0
+        skipped_bounds = 0
+        for pose_st in latest_path.poses:
+            pt = PointStamped()
+            pt.header = latest_path.header
+            pt.point = pose_st.pose.position
+            try:
+                pt_cam = do_transform_point(pt, trans)
+            except Exception as e:
+                rospy.logdebug_once(f"Transform error for waypoint: {e}")
+                continue
+            X, Y, Z = pt_cam.point.x, pt_cam.point.y, pt_cam.point.z
+            # 투영 시 Z 절대값 사용 (위/아래 모두 허용). 너무 가까우면 스킵.
+            if abs(Z) < 0.1:
+                skipped_z += 1
+                continue
+            u = int(fx * X / abs(Z) + cx)
+            v = int(fy * Y / abs(Z) + cy)
+            if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+                # 파란색(BGR) 원으로 waypoint 표시
+                cv2.circle(img, (u, v), 4, (255, 0, 0), -1)
+                pts_drawn += 1
+            else:
+                skipped_bounds += 1
+        # rospy.loginfo(f"[overlay-V{vehicle_id}] total:{pts_total} drawn:{pts_drawn} skipZ:{skipped_z} skipOut:{skipped_bounds}")
+        
+        # 곡선 path 시각화
+        if self.latest_smooth_paths[vehicle_id - 1] is not None:
+            img = self._overlay_smooth_path(img, header, vehicle_id)
+        
+        return img
+
+    def _overlay_smooth_path(self, img: np.ndarray, header, vehicle_id: int) -> np.ndarray:
+        """곡선 path를 이미지 평면에 투영하여 초록색 선으로 표시"""
+        if self.camera_infos[vehicle_id - 1] is None:
+            return img
+
+        camera_info = self.camera_infos[vehicle_id - 1]
+        smooth_path = self.latest_smooth_paths[vehicle_id - 1]
 
         # 카메라 내참수
         K = camera_info.K
@@ -526,52 +637,6 @@ class YOLOPBatchInferenceNode:
             # map -> camera transform
             trans = self.tf_buffer.lookup_transform(
                 header.frame_id,
-                latest_path.header.frame_id,
-                rospy.Time(0),
-                rospy.Duration(0.05)
-            )
-        except (tf2_ros.LookupException, tf2_ros.ExtrapolationException):
-            return img
-
-        pts_drawn = 0
-        for pose_st in latest_path.poses:
-            pt = PointStamped()
-            pt.header = latest_path.header
-            pt.point = pose_st.pose.position
-            try:
-                pt_cam = do_transform_point(pt, trans)
-            except Exception:
-                continue
-            X, Y, Z = pt_cam.point.x, pt_cam.point.y, pt_cam.point.z
-            if abs(Z) < 0.1:
-                continue
-            u = int(fx * X / abs(Z) + cx)
-            v = int(fy * Y / abs(Z) + cy)
-            if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-                cv2.circle(img, (u, v), 4, (255, 0, 0), -1)
-                pts_drawn += 1
-
-        # Smooth path 오버레이
-        if self.latest_smooth_paths[vehicle_id - 1] is not None:
-            img = self._overlay_smooth_path(img, header, vehicle_id)
-
-        return img
-
-    def _overlay_smooth_path(self, img: np.ndarray, header, vehicle_id: int) -> np.ndarray:
-        """Smooth path 오버레이"""
-        if self.camera_infos[vehicle_id - 1] is None:
-            return img
-
-        camera_info = self.camera_infos[vehicle_id - 1]
-        smooth_path = self.latest_smooth_paths[vehicle_id - 1]
-
-        K = camera_info.K
-        fx, fy = K[0], K[4]
-        cx, cy = K[2], K[5]
-
-        try:
-            trans = self.tf_buffer.lookup_transform(
-                header.frame_id,
                 smooth_path.header.frame_id,
                 rospy.Time(0),
                 rospy.Duration(0.05)
@@ -579,6 +644,7 @@ class YOLOPBatchInferenceNode:
         except (tf2_ros.LookupException, tf2_ros.ExtrapolationException):
             return img
 
+        # 곡선 path의 모든 점을 이미지 좌표로 변환
         path_points = []
         for pose_st in smooth_path.poses:
             pt = PointStamped()
@@ -596,11 +662,18 @@ class YOLOPBatchInferenceNode:
             if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
                 path_points.append((u, v))
 
+        # 곡선 path를 보라색 선으로 그리기
         if len(path_points) > 1:
             for i in range(len(path_points) - 1):
                 cv2.line(img, path_points[i], path_points[i+1], (255, 0, 255), 2)
 
         return img
+
+    def _get_yaw(self, q) -> float:
+        import math
+        siny_cosp = 2 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
+        return math.atan2(siny_cosp, cosy_cosp)
 
 
 if __name__ == "__main__":

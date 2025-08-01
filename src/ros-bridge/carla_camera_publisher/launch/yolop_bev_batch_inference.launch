@@ -1,0 +1,75 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- YOLOP + BEV-Planner 통합 배치 추론 시스템 -->
+  <!-- 3대 차량에 대한 YOLOP + BEV-Planner 동시 배치 추론 -->
+
+  <!-- 파라미터 설정 -->
+  <arg name="debug" default="false" doc="Enable debug mode"/>
+  <arg name="save_bev" default="false" doc="Save BEV rasters"/>
+  <arg name="enable_costmap" default="true" doc="Enable costmap generation"/>
+  <arg name="rviz" default="false" doc="Launch RViz for visualization"/>
+
+  <!-- ===== 1단계: 다중 차량 카메라 + 오도메트리 퍼블리셔 ===== -->
+  <node pkg="carla_camera_publisher" 
+        type="publish_multiple_carla_cam.py" 
+        name="multi_cam_pub"
+        output="screen"/>
+
+  <!-- ===== 2단계: YOLOP 배치 추론 ===== -->
+  <node pkg="carla_camera_publisher"
+        type="yolop_batch_inference_node.py"
+        name="yolop_batch"
+        output="screen">        
+    <param name="save_bev" value="$(arg save_bev)"/>
+    <param name="debug" value="$(arg debug)"/>
+    <param name="da_thresh" value="0.53"/>
+    <param name="ll_thresh" value="0.5"/>
+    <param name="enable_costmap" value="$(arg enable_costmap)"/>
+  </node>
+
+  <!-- ===== 3단계: BEV-Planner 배치 추론 ===== -->
+  <include file="$(find bev_planner_integration)/launch/bev_planner_batch.launch">
+    <arg name="debug" value="$(arg debug)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+  </include>
+
+  <!-- ===== 4단계: 통합 모니터링 (선택적) ===== -->
+  <group if="$(arg debug)">
+    <!-- 성능 모니터링 노드 -->
+    <node pkg="bev_planner_integration"
+          type="performance_monitor.py"
+          name="batch_performance_monitor"
+          output="screen">
+      
+      <!-- YOLOP 통계 -->
+      <remap from="yolop_statistics" to="/yolop_batch/statistics"/>
+      
+      <!-- BEV-Planner 통계 -->
+      <remap from="bev_statistics" to="/bev_planner_batch/statistics"/>
+      
+      <!-- 출력 -->
+      <remap from="performance_report" to="/batch_performance/report"/>
+    </node>
+  </group>
+
+  <!-- ===== 5단계: RViz 시각화 (선택적) ===== -->
+  <group if="$(arg rviz)">
+    <node pkg="rviz" 
+          type="rviz" 
+          name="rviz"
+          args="-d $(find carla_camera_publisher)/config/batch_inference.rviz"
+          output="screen"/>
+  </group>
+
+  <!-- 로그 정보 -->
+  <param name="/use_sim_time" value="false"/>
+  
+  <!-- 시작 메시지 -->
+  <node pkg="rostopic" 
+        type="rostopic" 
+        name="startup_message"
+        args="pub /system_status std_msgs/String 'YOLOP + BEV-Planner 배치 추론 시스템 시작'"
+        output="screen"
+        launch-prefix="timeout 2"/>
+  
+</launch> 
