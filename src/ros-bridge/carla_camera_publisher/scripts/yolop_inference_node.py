@@ -324,33 +324,39 @@ class YOLOPInferenceNode:
         # === Waypoint 경로 오버레이 ===
         vis_img = self._overlay_waypoints(vis_img, header)
 
-        # OccupancyGrid 메시지 생성
-        det_grid_msg = self._build_occupancy_grid(det_mask, header.stamp, "map", occupied_val=100, free_val=0)
+        # 좌표계 정합: 원본 그대로 사용해서 실제 환경 확인
+        # 회전 없이 YOLOP 원본 BEV 그리드 사용
+        det_mask_rotated = det_mask.copy()  # 회전 없음
+        da_bin_rotated = da_bin.copy()
+        ll_bin_rotated = ll_bin.copy()
+        
+        # OccupancyGrid 메시지 생성 (ego_vehicle 프레임으로 통일)
+        det_grid_msg = self._build_occupancy_grid(det_mask_rotated, header.stamp, "ego_vehicle", occupied_val=100, free_val=0)
         # DA: 주행 가능 영역은 free(0), 그 외는 occupied(100)
-        da_occ_mask = np.where(da_bin == 1, 0, 1).astype(np.uint8)  # 1이면 occupied
-        da_grid_msg = self._build_occupancy_grid(da_occ_mask, header.stamp, "map", occupied_val=100, free_val=0)
-        # LL: 차선은 occupied(50)로 표현, free_val=0, occupied_val=50
-        ll_grid_msg = self._build_occupancy_grid(ll_bin, header.stamp, "map", occupied_val=100, free_val=0)
+        da_occ_mask = np.where(da_bin_rotated == 1, 0, 1).astype(np.uint8)
+        da_grid_msg = self._build_occupancy_grid(da_occ_mask, header.stamp, "ego_vehicle", occupied_val=100, free_val=0)
+        # LL: 차선은 occupied(100)로 표현
+        ll_grid_msg = self._build_occupancy_grid(ll_bin_rotated, header.stamp, "ego_vehicle", occupied_val=100, free_val=0)
 
         # === 통합 Costmap OccupancyGrid 생성 ===
         if self.enable_costmap:
-            # DA 외부는 99로 더 높임
-            combined_mask = np.full(det_mask.shape, 99, dtype=np.int8)
+            # 회전된 마스크 사용
+            combined_mask = np.full(det_mask_rotated.shape, 99, dtype=np.int8)
 
             # 1) Drivable Area (DA): 내부 0, 경계 90
             kernel3 = np.ones((3, 3), np.uint8)
-            da_eroded = cv2.erode(da_bin, kernel3, iterations=2)
-            da_border = cv2.bitwise_and(da_bin, cv2.bitwise_not(da_eroded))
+            da_eroded = cv2.erode(da_bin_rotated, kernel3, iterations=2)
+            da_border = cv2.bitwise_and(da_bin_rotated, cv2.bitwise_not(da_eroded))
 
             combined_mask[da_eroded == 1] = 0      # 자유 공간
             combined_mask[da_border == 1] = 90     # 경계부 cost ↑
 
             # 2) Lane Line (LL): 장애물과 동일하게 100
-            ll_dilated = cv2.dilate(ll_bin, kernel3, iterations=1)
+            ll_dilated = cv2.dilate(ll_bin_rotated, kernel3, iterations=1)
             combined_mask[ll_dilated == 1] = 100
 
             # 3) Detection (Det): 장애물 100
-            det_dilated = cv2.dilate(det_mask, kernel3, iterations=2)
+            det_dilated = cv2.dilate(det_mask_rotated, kernel3, iterations=2)
             combined_mask[det_dilated == 1] = 100
 
             # 4) Ego vehicle 중앙 박스 → DA(0)로 강제 설정 (임시)
@@ -373,7 +379,7 @@ class YOLOPInferenceNode:
 
             costmap_msg = OccupancyGrid()
             costmap_msg.header.stamp = header.stamp
-            costmap_msg.header.frame_id = "map"
+            costmap_msg.header.frame_id = "ego_vehicle"  # 다른 그리드들과 프레임 통일
             costmap_msg.info = meta
             costmap_msg.data = combined_mask.flatten().tolist()
             self.pub_costmap.publish(costmap_msg)
@@ -381,7 +387,8 @@ class YOLOPInferenceNode:
         # === BEV Raster 저장 ===
         if hasattr(self, 'bev_save_dir'):
             try:
-                raster = np.stack([det_mask, da_bin, ll_bin], axis=0).astype(np.uint8)
+                # 좌표계 정합된 회전 마스크 저장
+                raster = np.stack([det_mask_rotated, da_bin_rotated, ll_bin_rotated], axis=0).astype(np.uint8)
                 fname = self.bev_save_dir / f"{header.stamp.to_sec():.6f}.npy"
                 np.save(fname, raster)
             except Exception as e:

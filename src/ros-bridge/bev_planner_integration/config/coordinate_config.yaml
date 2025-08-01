@@ -1,0 +1,53 @@
+# BEV-Planner 좌표계 설정
+# CARLA와 ROS 간의 좌표계 변환 및 BEV 그리드 정합을 위한 설정
+
+coordinate_system:
+  # 기본 프레임 설정
+  base_frame: "map"           # 기본 참조 프레임
+  ego_frame: "ego_vehicle"    # Ego vehicle 프레임
+  
+  # CARLA-ROS 좌표계 변환
+  carla_to_ros:
+    # CARLA: 왼손 좌표계 (X 전진, Y 우측, Z 상향)
+    # ROS: 오른손 좌표계 (X 전진, Y 좌측, Z 상향)
+    flip_y: true              # Y 좌표 반전 (CARLA -> ROS)
+    
+  # BEV 그리드 설정
+  bev_grid:
+    # 그리드 크기
+    width: 80                 # 그리드 너비 (픽셀)
+    height: 48                # 그리드 높이 (픽셀)
+    
+    # 실제 물리적 크기 (미터)
+    physical_width: 40.0      # 실제 너비 40m
+    physical_height: 24.0     # 실제 높이 24m
+    
+    # 그리드 중심점 (ego vehicle 위치)
+    center_x: 40              # 너비 중심 (픽셀)
+    center_y: 24              # 높이 중심 (픽셀)
+    
+    # 방향 정렬
+    rotation_correction: 90   # 카메라 BEV -> 차량 좌표계 회전각 (도)
+    
+  # 궤적 변환 설정
+  trajectory:
+    # 미래 예측 시간
+    prediction_horizon: 3.0   # 3초
+    time_step: 0.5           # 0.5초 간격
+    
+    # 좌표 변환
+    ego_to_map: true         # ego vehicle -> map 프레임 변환
+    
+    # 물리적 제약
+    max_lateral_accel: 3.0   # 최대 횡가속도 (m/s²)
+    max_speed: 15.0          # 최대 속도 (m/s)
+
+# 디버깅 및 시각화
+debug:
+  log_coordinate_transforms: true
+  visualize_coordinate_frames: true
+  save_debug_grids: false
+  
+  # 좌표계 검증
+  validate_transforms: true
+  check_frame_consistency: true 
