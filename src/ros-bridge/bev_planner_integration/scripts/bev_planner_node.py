@@ -483,7 +483,8 @@ class BEVPlannerNode:
                     score = vector[0] / norm  # X 성분의 정규화된 값
                     rospy.logdebug(f"  {name}: 벡터({vector[0]:.2f}, {vector[1]:.2f}), 점수: {score:.3f}")
                     
-                    if score > best_score:
+                    # 더 엄격한 기준 (0.3 이상만 허용)
+                    if score > 0.3 and score > best_score:
                         best_score = score
                         best_transform = transformed
                         best_name = name
@@ -498,7 +499,7 @@ class BEVPlannerNode:
             rospy.logwarn("⚠️ 적절한 변환을 찾지 못함, 원본 사용")
             return trajectory
     
-    def _smooth_trajectory(self, trajectory: np.ndarray, alpha: float = 0.9) -> np.ndarray:
+    def _smooth_trajectory(self, trajectory: np.ndarray, alpha: float = 0.95) -> np.ndarray:
         """궤적 스무딩 (지수 이동 평균 + 가우시안 필터)"""
         if len(trajectory) <= 1:
             return trajectory
@@ -509,12 +510,23 @@ class BEVPlannerNode:
         for i in range(1, len(trajectory)):
             smoothed[i] = alpha * trajectory[i] + (1 - alpha) * smoothed[i-1]
         
+        # 추가: 이전 궤적과의 연속성 보장 (요동 방지)
+        if hasattr(self, 'last_smoothed_trajectory') and self.last_smoothed_trajectory is not None:
+            if len(self.last_smoothed_trajectory) > 0 and len(smoothed) > 0:
+                # 이전 궤적의 끝점과 현재 시작점 연결
+                continuity_weight = 0.8
+                smoothed[0] = (continuity_weight * self.last_smoothed_trajectory[-1] + 
+                              (1 - continuity_weight) * smoothed[0])
+        
+        # 현재 궤적 저장 (다음 프레임에서 사용)
+        self.last_smoothed_trajectory = smoothed.copy()
+        
         # 2. 가우시안 필터로 추가 스무딩 (요동 제거)
         from scipy.ndimage import gaussian_filter1d
         try:
-            # X, Y 좌표를 각각 필터링
-            smoothed[:, 0] = gaussian_filter1d(smoothed[:, 0], sigma=0.5)
-            smoothed[:, 1] = gaussian_filter1d(smoothed[:, 1], sigma=0.5)
+            # X, Y 좌표를 각각 필터링 (더 강한 스무딩)
+            smoothed[:, 0] = gaussian_filter1d(smoothed[:, 0], sigma=1.0)  # 0.5 → 1.0
+            smoothed[:, 1] = gaussian_filter1d(smoothed[:, 1], sigma=1.0)  # 0.5 → 1.0
         except ImportError:
             # scipy가 없으면 단순한 이동 평균
             if len(smoothed) >= 3:
@@ -591,13 +603,13 @@ class BEVPlannerNode:
                     cos_angle = np.dot(prev_seg, next_seg) / (np.linalg.norm(prev_seg) * np.linalg.norm(next_seg))
                     angle = np.arccos(np.clip(cos_angle, -1, 1))
                     
-                    # 60도 이상 급회전 방지
-                    if angle > np.pi/3:  # 60도
+                    # 45도 이상 급회전 방지 (더 엄격하게)
+                    if angle > np.pi/4:  # 45도 (60도 → 45도)
                         rospy.logdebug(f"🛡️ 급회전 방지: {np.degrees(angle):.1f}° → 조정")
                         
-                        # 부드러운 곡선으로 조정
+                        # 부드러운 곡선으로 조정 (더 강한 스무딩)
                         mid_point = (safe_trajectory[i-1] + safe_trajectory[i+1]) / 2
-                        safe_trajectory[i] = 0.7 * safe_trajectory[i] + 0.3 * mid_point
+                        safe_trajectory[i] = 0.5 * safe_trajectory[i] + 0.5 * mid_point  # 0.7/0.3 → 0.5/0.5
         
         return safe_trajectory
     
