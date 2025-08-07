@@ -1,0 +1,24 @@
+<launch>
+    
+    <!-- Vehicle Spawner (첫 번째 waypoint 위치에 차량 스폰) -->
+    <node name="vehicle_spawner" pkg="carla_camera_publisher" type="spawn_vehicle_at_first_waypoint.py" output="screen">
+        <param name="path_file" value="/home/carla/.ros/global_path_1.txt"/>
+        <param name="vehicle_model" value="vehicle.tesla.model3"/>
+    </node>
+    <!-- Global Path Pure Pursuit Controller -->
+    <node name="global_path_pure_pursuit" pkg="carla_camera_publisher" type="global_path_pure_pursuit.py" output="screen">
+        <param name="lookahead_distance" value="0.3"/>
+        <param name="max_steer" value="0.4"/>
+        <param name="target_speed" value="2.0"/>
+        <param name="wheelbase" value="2.8"/>
+        <param name="path_file" value="/home/carla/.ros/global_path_1.txt"/>
+    </node>
+
+    <!-- Manual Control (필요시 수동 제어) - 주석 처리 -->
+    <!-- <node name="manual_control" pkg="carla_manual_control" type="manual_control" output="screen">
+        <param name="role_name" value="ego_vehicle"/>
+    </node> -->
+
+    <!-- RViz for visualization - 주석 처리 -->
+    <!-- <node name="rviz" pkg="rviz" type="rviz" args="-d $(find carla_camera_publisher)/config/global_path_viz.rviz" output="screen"/> -->
+</launch> 

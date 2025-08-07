@@ -21,6 +21,25 @@ import sys
 from distutils.version import LooseVersion
 from threading import Thread, Lock, Event
 
+# ==== CARLA egg 경로 자동 추가 ====
+def append_carla_egg():
+    carla_python_path = os.getenv("CARLA_PYTHON_PATH")
+    if carla_python_path is None:
+        raise EnvironmentError("CARLA_PYTHON_PATH 환경변수가 설정되지 않았습니다.")
+
+    # 예: carla-0.9.13-py3.7-linux-x86_64.egg
+    for fname in os.listdir(carla_python_path):
+        if fname.startswith("carla-") and fname.endswith(".egg") and "py3.7" in fname:
+            full_path = os.path.join(carla_python_path, fname)
+            if full_path not in sys.path:
+                sys.path.append(full_path)
+            break
+    else:
+        raise FileNotFoundError("CARLA egg 파일을 찾을 수 없습니다. py3.7에 맞는 egg가 있어야 합니다.")
+
+append_carla_egg()
+
+# ==== carla 모듈 임포트 ====
 import carla
 
 import ros_compatibility as roscomp
@@ -61,6 +80,8 @@ class CarlaRosBridge(CompatibleNode):
         :type params: dict
         """
         super(CarlaRosBridge, self).__init__("ros_bridge_node")
+        self.shutdown = Event()
+        self.sync_mode = False
 
     # pylint: disable=attribute-defined-outside-init
     def initialize_bridge(self, carla_world, params):
@@ -411,12 +432,15 @@ def main(args=None):
             port=parameters['port'])
         carla_client.set_timeout(parameters['timeout'])
 
-        # check carla version
-        dist = pkg_resources.get_distribution("carla")
-        if LooseVersion(dist.version) != LooseVersion(CarlaRosBridge.CARLA_VERSION):
-            carla_bridge.logfatal("CARLA python module version {} required. Found: {}".format(
-                CarlaRosBridge.CARLA_VERSION, dist.version))
-            sys.exit(1)
+        # check carla version (skip if carla is not installed via pip)
+        try:
+            dist = pkg_resources.get_distribution("carla")
+            if LooseVersion(dist.version) != LooseVersion(CarlaRosBridge.CARLA_VERSION):
+                carla_bridge.logfatal("CARLA python module version {} required. Found: {}".format(
+                    CarlaRosBridge.CARLA_VERSION, dist.version))
+                sys.exit(1)
+        except pkg_resources.DistributionNotFound:
+            carla_bridge.logwarn("CARLA not found in pip packages, skipping version check")
 
         if LooseVersion(carla_client.get_server_version()) != \
            LooseVersion(carla_client.get_client_version()):

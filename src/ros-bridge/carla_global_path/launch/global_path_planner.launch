@@ -1,0 +1,11 @@
+<launch>
+  <!-- RViz argument -->
+  <arg name="rviz" default="false"/>
+  
+  <!-- Launch global path planner (direct CARLA connection) -->
+  <node name="global_path_planner" pkg="carla_global_path" type="global_path_planner.py" output="screen">
+  </node>
+
+  <!-- Optional: Launch RViz for visualization -->
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find carla_global_path)/config/global_path_viz.rviz" output="screen" if="$(arg rviz)"/>
+</launch> 

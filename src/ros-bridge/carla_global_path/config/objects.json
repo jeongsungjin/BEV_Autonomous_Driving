@@ -1,0 +1,19 @@
+{
+  "objects": [
+    {
+      "type": "vehicle.tesla.model3",
+      "id": "ego_vehicle",
+      "random_pose": false,
+      "transform": {
+        "pitch": 0.0,
+        "x": 0.0,
+        "y": 0.0,
+        "yaw": 0.0,
+        "z": 0.5
+      },
+      "attributes": {
+        "role_name": "ego_vehicle"
+      }
+    }
+  ]
+} 
