@@ -7,9 +7,9 @@
     </node>
     <!-- Global Path Pure Pursuit Controller -->
     <node name="global_path_pure_pursuit" pkg="carla_camera_publisher" type="global_path_pure_pursuit.py" output="screen">
-        <param name="lookahead_distance" value="0.3"/>
-        <param name="max_steer" value="0.4"/>
-        <param name="target_speed" value="2.0"/>
+        <param name="lookahead_distance" value="3.0"/>
+        <param name="max_steer" value="1.2"/>
+        <param name="target_speed" value="8.0"/>
         <param name="wheelbase" value="2.8"/>
         <param name="path_file" value="/home/carla/.ros/global_path_1.txt"/>
     </node>

@@ -36,9 +36,9 @@ class GlobalPathPurePursuitController:
         rospy.init_node('global_path_pure_pursuit_controller')
         
         # 파라미터 설정
-        self.lookahead_distance = rospy.get_param('~lookahead_distance', 0.2)  # 0.3에서 0.2로 더 줄임
-        self.max_steer = rospy.get_param('~max_steer', 0.4)
-        self.target_speed = rospy.get_param('~target_speed', 2.0)  # 4.0에서 6.0으로 증가
+        self.lookahead_distance = rospy.get_param('~lookahead_distance', 1.5)  # 코너 주행에 최적화된 거리
+        self.max_steer = rospy.get_param('~max_steer', 1.2)  # 조향각 완화
+        self.target_speed = rospy.get_param('~target_speed', 8.0)  # 코너에서 적절한 속도
         self.wheelbase = rospy.get_param('~wheelbase', 2.8)
         self.path_file = rospy.get_param('~path_file', '/home/carla/.ros/global_path_1.txt')
         
@@ -197,22 +197,26 @@ class GlobalPathPurePursuitController:
             self.current_pose.position.y = msg.pose.pose.position.y
             self.current_pose.position.z = msg.pose.pose.position.z
             
-            # Yaw 계산 - CARLA transform 직접 사용
-            try:
-                # CARLA transform에서 직접 yaw 가져오기
-                carla_transform = self.vehicle.get_transform()
-                yaw_rad = math.radians(carla_transform.rotation.yaw)
-                
-                # Quaternion으로 변환
-                self.current_pose.orientation.x = 0.0
-                self.current_pose.orientation.y = 0.0
-                self.current_pose.orientation.z = math.sin(yaw_rad / 2.0)
-                self.current_pose.orientation.w = math.cos(yaw_rad / 2.0)
-                
-                rospy.loginfo(f"CARLA Transform Yaw: {carla_transform.rotation.yaw:.2f}도 ({yaw_rad:.4f} 라디안)")
-                
-            except Exception as e:
-                rospy.logwarn(f"CARLA transform 오류: {e}")
+            # Yaw 계산 - CARLA transform 우선 사용
+            yaw_rad = 0.0
+            if self.vehicle is not None:
+                try:
+                    carla_transform = self.vehicle.get_transform()
+                    yaw_rad = math.radians(carla_transform.rotation.yaw)
+                    rospy.loginfo(f"CARLA Transform Yaw: {carla_transform.rotation.yaw:.2f}도 ({yaw_rad:.4f} 라디안)")
+                    
+                    # Quaternion으로 변환하여 저장
+                    self.current_pose.orientation.x = 0.0
+                    self.current_pose.orientation.y = 0.0
+                    self.current_pose.orientation.z = math.sin(yaw_rad / 2.0)
+                    self.current_pose.orientation.w = math.cos(yaw_rad / 2.0)
+                    
+                except Exception as e:
+                    rospy.logwarn(f"CARLA transform 오류: {e}")
+                    # Fallback: 기존 quaternion 사용
+                    self.current_pose.orientation = msg.pose.pose.orientation
+                    yaw_rad = self.get_yaw(msg.pose.pose.orientation)
+            else:
                 # Fallback: 기존 quaternion 사용
                 self.current_pose.orientation = msg.pose.pose.orientation
                 yaw_rad = self.get_yaw(msg.pose.pose.orientation)
@@ -253,13 +257,13 @@ class GlobalPathPurePursuitController:
             dot_product = vec1_norm[0] * vec2_norm[0] + vec1_norm[1] * vec2_norm[1]
             angle_change = math.acos(max(-1, min(1, dot_product)))
             
-            # 곡선 감지 (각도 변화가 0.2 라디안 이상으로 더 엄격하게)
-            if angle_change > 0.2:  # 0.3에서 0.2로 더 엄격하게
+            # 곡선 감지 (각도 변화가 0.4 라디안 이상으로 완화)
+            if angle_change > 0.4:  # 0.3에서 0.4로 완화
                 rospy.loginfo(f"곡선 감지: 각도 변화 {angle_change:.3f} 라디안, lookahead distance 조정")
-                return self.lookahead_distance * 0.3  # 곡선에서는 30% 감소 (50%에서 30%로 더 엄격하게)
-            elif angle_change > 0.05:  # 0.1에서 0.05로 더 엄격하게
+                return self.lookahead_distance * 0.6  # 곡선에서는 60% 감소 (50%에서 60%로 완화)
+            elif angle_change > 0.2:  # 0.15에서 0.2로 완화
                 rospy.loginfo(f"약한 곡선 감지: 각도 변화 {angle_change:.3f} 라디안")
-                return self.lookahead_distance * 0.5  # 약한 곡선에서는 50% (70%에서 50%로 더 엄격하게)
+                return self.lookahead_distance * 0.8  # 약한 곡선에서는 80% (70%에서 80%로 완화)
         
         return self.lookahead_distance
 
@@ -300,14 +304,14 @@ class GlobalPathPurePursuitController:
             dist_to_current = math.hypot(wx - x, wy - y)
             
             # 거리가 너무 멀면 다음 waypoint로 점프
-            if dist_to_current > 15.0:  # 10.0에서 15.0으로 완화
+            if dist_to_current > 25.0:  # 20.0에서 25.0으로 완화
                 rospy.logwarn(f"현재 waypoint가 너무 멀리 떨어져 있습니다. 거리: {dist_to_current:.2f}m")
                 
-                # 다음 10개 waypoint 중 가장 가까운 것 찾기
+                # 다음 20개 waypoint 중 가장 가까운 것 찾기
                 min_dist = float('inf')
                 best_index = self.current_waypoint_index
                 
-                for i in range(self.current_waypoint_index, min(self.current_waypoint_index + 10, len(self.waypoints))):
+                for i in range(self.current_waypoint_index, min(self.current_waypoint_index + 20, len(self.waypoints))):
                     wx, wy = self.waypoints[i]
                     dist = math.hypot(wx - x, wy - y)
                     if dist < min_dist:
@@ -323,7 +327,7 @@ class GlobalPathPurePursuitController:
                     rospy.loginfo(f"다음 waypoint로 진행: {self.current_waypoint_index}")
             
             # 현재 waypoint에 가까우면 다음으로 진행
-            elif dist_to_current < 3.0:  # 2.0에서 3.0으로 완화
+            elif dist_to_current < 3.0:  # 5.0에서 3.0으로 엄격하게
                 if self.current_waypoint_index < len(self.waypoints) - 1:
                     self.current_waypoint_index += 1
                     rospy.loginfo(f"Waypoint {self.current_waypoint_index-1} 도달. 다음 waypoint로 진행: {self.current_waypoint_index}")
@@ -675,6 +679,48 @@ class GlobalPathPurePursuitController:
             # Fallback: 기존 방식
             yaw = self.get_yaw(self.current_pose.orientation)
         
+        # waypoint 진행도 업데이트
+        self.update_waypoint_progress()
+        
+        # 현재 waypoint까지의 거리 계산 (경로 이탈 감지용)
+        x = self.current_pose.position.x
+        y = self.current_pose.position.y
+        dist_to_current = 0.0
+        if self.current_waypoint_index < len(self.waypoints):
+            wx, wy = self.waypoints[self.current_waypoint_index]
+            dist_to_current = math.hypot(wx - x, wy - y)
+        
+        # 경로 이탈 감지 및 리셋
+        path_dist = self.calculate_distance_to_path()
+        if path_dist > 10.0 or (self.current_waypoint_index < len(self.waypoints) and dist_to_current > 30.0):  # 15.0에서 10.0으로 엄격하게
+            rospy.logwarn(f"차량이 경로를 많이 벗어났습니다 (Path Dist: {path_dist:.2f}m, Waypoint Dist: {dist_to_current:.2f}m). 가장 가까운 waypoint로 리셋합니다.")
+            
+            # 가장 가까운 waypoint 찾기
+            min_dist = float('inf')
+            closest_index = 0
+            
+            for i, (wx, wy) in enumerate(self.waypoints):
+                dist = math.hypot(wx - x, wy - y)
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_index = i
+            
+            self.current_waypoint_index = closest_index
+            rospy.loginfo(f"타겟을 가장 가까운 waypoint로 리셋: 인덱스 {closest_index}, 위치 ({self.waypoints[closest_index][0]:.6f}, {self.waypoints[closest_index][1]:.6f}), 거리 {min_dist:.2f}m")
+        
+        # 좌표계 변환 - CARLA와 ROS 좌표계 차이 해결
+        # x, y는 이미 위에서 정의됨
+        
+        # CARLA transform에서 직접 yaw 가져오기
+        try:
+            carla_transform = self.vehicle.get_transform()
+            yaw = math.radians(carla_transform.rotation.yaw)
+            rospy.loginfo(f"CARLA Yaw: {carla_transform.rotation.yaw:.2f}도 ({yaw:.4f} 라디안)")
+        except Exception as e:
+            rospy.logwarn(f"CARLA transform 오류: {e}")
+            # Fallback: 기존 방식
+            yaw = self.get_yaw(self.current_pose.orientation)
+        
         # 타겟 waypoint 찾기
         target_point = self.find_target_point_sequential()
         if target_point is None:
@@ -682,42 +728,6 @@ class GlobalPathPurePursuitController:
             return
         
         tx, ty = target_point
-        
-        # waypoint 진행도 업데이트
-        self.update_waypoint_progress()
-        
-        # 차량이 경로를 많이 벗어났으면 현재 위치에서 가장 가까운 waypoint로 리셋
-        x = self.current_pose.position.x
-        y = self.current_pose.position.y
-        path_dist = self.calculate_distance_to_path()
-        
-        # Path distance가 임계값을 넘거나 현재 waypoint가 너무 멀리 떨어져 있으면 리셋
-        if path_dist > 15 or (self.current_waypoint_index < len(self.waypoints) and 
-                              self.current_waypoint_index < len(self.waypoints)):
-            wx, wy = self.waypoints[self.current_waypoint_index]
-            dist_to_current = math.hypot(wx - x, wy - y)
-            
-            if dist_to_current > 50:  # 50m 이상 떨어져 있으면 리셋
-                rospy.logwarn(f"차량이 경로를 많이 벗어났습니다 (Path Dist: {path_dist:.2f}m, Waypoint Dist: {dist_to_current:.2f}m). 가장 가까운 waypoint로 리셋합니다.")
-                
-                # 현재 위치에서 가장 가까운 waypoint 찾기
-                min_dist = float('inf')
-                closest_index = 0
-                for i, (wx, wy) in enumerate(self.waypoints):
-                    dist = math.hypot(wx - x, wy - y)
-                    if dist < min_dist:
-                        min_dist = dist
-                        closest_index = i
-                
-                self.current_waypoint_index = closest_index
-                target = self.waypoints[closest_index] if self.waypoints else None
-                rospy.loginfo(f"타겟을 가장 가까운 waypoint로 리셋: 인덱스 {closest_index}, 위치 {target}, 거리 {min_dist:.2f}m")
-        
-        # 좌표계 변환 - CARLA와 ROS 좌표계 차이 해결
-        x = self.current_pose.position.x
-        y = self.current_pose.position.y
-        yaw = self.get_yaw(self.current_pose.orientation)
-        tx, ty = target
         
         # 디버깅: 차량 위치와 방향 정보 출력
         rospy.loginfo(f"차량 위치: ({x:.3f}, {y:.3f})")
@@ -758,48 +768,48 @@ class GlobalPathPurePursuitController:
         else:
             steer = 0
         
-        # 스티어링 각도 제한 (완화)
-        max_steer_safe = self.max_steer * 0.6  # 40%에서 60%로 완화
+        # 스티어링 각도 제한 (코너 주행에 적합하게)
+        max_steer_safe = self.max_steer * 0.8  # 60%에서 80%로 완화
         steer = max(-max_steer_safe, min(max_steer_safe, steer))
         
         # 급격한 조향 변화 방지 (완화)
         if hasattr(self, 'prev_steer'):
             steer_diff = abs(steer - self.prev_steer)
-            if steer_diff > 0.15:  # 0.1에서 0.15로 완화
+            if steer_diff > 0.2:  # 0.15에서 0.2로 완화
                 rospy.logwarn(f"급격한 조향 변화 감지: {steer_diff:.3f}, 조향각 제한")
                 if steer > self.prev_steer:
-                    steer = self.prev_steer + 0.15
+                    steer = self.prev_steer + 0.2
                 else:
-                    steer = self.prev_steer - 0.15
+                    steer = self.prev_steer - 0.2
         self.prev_steer = steer
         
-        # 속도 조정 (곡선에서는 감속, 현재 waypoint에 가까우면 감속)
+        # 속도 조정 (안정적인 주행에 최적화)
         speed = self.target_speed
         
         # 현재 waypoint까지의 거리에 따른 속도 조정
         if self.current_waypoint_index < len(self.waypoints):
             wx, wy = self.waypoints[self.current_waypoint_index]
             dist_to_current = math.hypot(wx - x, wy - y)
-            if dist_to_current < 2.0:  # 1.5에서 2.0으로 증가
-                speed *= 0.5  # 30%에서 50%로 증가
+            if dist_to_current < 2.0:  # 3.0에서 2.0으로 엄격하게
+                speed *= 0.6  # 70%에서 60%로 엄격하게
         
-        # 조향각에 따른 속도 조정 (완화)
-        if abs(steer) > 0.05:  # 0.02에서 0.05로 완화
-            speed *= (1.0 - abs(steer) / self.max_steer * 0.6)  # 0.8에서 0.6으로 완화
+        # 조향각에 따른 속도 조정 (안정적인 주행에 적합하게)
+        if abs(steer) > 0.15:  # 0.1에서 0.15로 엄격하게
+            speed *= (1.0 - abs(steer) / self.max_steer * 0.4)  # 0.5에서 0.4로 엄격하게
         
-        # 급격한 조향 시 추가 감속 (완화)
-        if abs(steer) > 0.2:  # 0.1에서 0.2로 완화
-            speed *= 0.6  # 30%에서 60%로 완화
+        # 급격한 조향 시 추가 감속 (엄격하게)
+        if abs(steer) > 0.25:  # 0.3에서 0.25로 엄격하게
+            speed *= 0.5  # 70%에서 50%로 엄격하게
             rospy.logwarn(f"급격한 조향 감지: steer={steer:.3f}, 속도 감속: {speed:.2f} m/s")
         
         # 곡선 감지에 따른 추가 감속 (완화)
         dynamic_lookahead = self.detect_curve()
-        if dynamic_lookahead < self.lookahead_distance * 0.5:  # 0.6에서 0.5로 더 엄격하게
-            speed *= 0.7  # 곡선에서 70% 추가 감속 (60%에서 70%로 완화)
+        if dynamic_lookahead < self.lookahead_distance * 0.8:  # 0.7에서 0.8로 완화
+            speed *= 0.9  # 곡선에서 90% 추가 감속 (80%에서 90%로 완화)
             rospy.loginfo(f"곡선 구간 감지: 속도 추가 감속 {speed:.2f} m/s")
         
-        # 최소 속도 보장 (더 높게 설정)
-        speed = max(1.0, speed)  # 2.0에서 3.0으로 증가
+        # 최소 속도 보장
+        speed = max(2.0, speed)  # 1.5에서 2.0으로 증가
         
         # 최대 속도 제한
         speed = min(speed, self.target_speed)
