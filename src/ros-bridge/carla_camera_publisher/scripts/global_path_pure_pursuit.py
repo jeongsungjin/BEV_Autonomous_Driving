@@ -9,6 +9,7 @@ from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from ackermann_msgs.msg import AckermannDrive
+from geometry_msgs.msg import Pose  # ADD: ensure Pose is available
 
 # ==== CARLA egg 경로 자동 추가 ====
 def append_carla_egg():
@@ -63,7 +64,7 @@ class GlobalPathPurePursuitController:
         
         # 경로 데이터 초기화
         self.waypoints = []
-        self.current_pose = None
+        self.current_pose = Pose()  # INIT: avoid NoneType in odom_callback
         self.current_waypoint_index = 0
         self.prev_steer = 0.0  # 이전 조향각 초기화
         

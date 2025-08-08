@@ -1,0 +1,114 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 통합: Global Path 주행 + YOLOP + BEV-Planner (local path 생성/시각화 전용) -->
+
+  <!-- 공통 인자 -->
+  <arg name="path_file" default="/home/carla/.ros/global_path_1.txt"/>
+  <arg name="vehicle_model" default="vehicle.tesla.model3"/>
+  <arg name="debug" default="false"/>
+  <arg name="use_gpu" default="true"/>
+  <arg name="namespace" default="bev_planner"/>
+  <arg name="rviz" default="false"/>
+
+  <!-- 1) 차량 스폰: 글로벌 패스 첫 웨이포인트 위치 -->
+  <node name="vehicle_spawner"
+        pkg="carla_camera_publisher"
+        type="spawn_vehicle_at_first_waypoint.py"
+        output="screen">
+    <param name="path_file" value="$(arg path_file)"/>
+    <param name="vehicle_model" value="$(arg vehicle_model)"/>
+  </node>
+
+  <!-- 1) Global Path Pure Pursuit 제어 (항상 글로벌 패스 추종) -->
+  <node name="global_path_pure_pursuit"
+        pkg="carla_camera_publisher"
+        type="global_path_pure_pursuit.py"
+        output="screen">
+    <param name="lookahead_distance" value="1.5"/>
+    <param name="max_steer" value="1.2"/>
+    <param name="target_speed" value="6.0"/>
+    <param name="wheelbase" value="2.8"/>
+    <param name="path_file" value="$(arg path_file)"/>
+    <!-- 스크립트 내부가 waypoints_file 파라미터를 읽으므로 함께 전달 -->
+    <param name="waypoints_file" value="$(arg path_file)"/>
+  </node>
+
+  <!-- 2) 기존 ego_vehicle에 탑다운 카메라 부착 + Odom/TF/CameraInfo 퍼블리시 -->
+  <node name="attach_topdown_camera"
+        pkg="carla_camera_publisher"
+        type="publish_carla_cam_attach.py"
+        output="screen">
+    <param name="role_name" value="ego_vehicle"/>
+    <param name="image_topic" value="/carla/yolop/image_raw"/>
+    <param name="camera_info_topic" value="/carla/yolop/camera_info"/>
+    <param name="topdown_height" value="30.0"/>
+    <param name="fov" value="90.0"/>
+    <param name="image_width" value="640"/>
+    <param name="image_height" value="384"/>
+    <param name="set_spectator" value="true"/>
+  </node>
+
+  <!-- 2) YOLOP 추론 (단일 차량) -->
+  <node pkg="carla_camera_publisher"
+        type="yolop_inference_node.py"
+        name="yolop"
+        output="screen">
+    <param name="save_bev" value="false"/>
+    <param name="debug" value="$(arg debug)"/>
+    <param name="da_thresh" value="0.7"/>
+    <param name="ll_thresh" value="0.7"/>
+  </node>
+
+  <!-- 2) BEV-Planner (local path 계획) -->
+  <node pkg="bev_planner_integration"
+        type="bev_planner_node.py"
+        name="bev_planner_node"
+        ns="$(arg namespace)"
+        output="screen"
+        respawn="true">
+    <param name="debug" value="$(arg debug)"/>
+    <param name="target_fps" value="30"/>
+    <param name="use_gpu" value="$(arg use_gpu)"/>
+    <!-- YOLOP 토픽 remap -->
+    <remap from="yolop_det_grid" to="/carla/yolop/det_grid"/>
+    <remap from="yolop_da_grid" to="/carla/yolop/da_grid"/>
+    <remap from="yolop_ll_grid" to="/carla/yolop/ll_grid"/>
+    <!-- Odom 입력 -->
+    <remap from="ego_odometry" to="/carla/ego_vehicle/odometry"/>
+    <!-- 출력 토픽 -->
+    <remap from="planned_trajectory" to="/$(arg namespace)/planned_trajectory"/>
+    <remap from="debug_visualization" to="/$(arg namespace)/debug_vis"/>
+    <remap from="statistics" to="/$(arg namespace)/statistics"/>
+  </node>
+
+  <!-- BEV 궤적 시각화 (ego_vehicle 프레임) -->
+  <node pkg="bev_planner_integration"
+        type="trajectory_visualizer_node.py"
+        name="trajectory_visualizer"
+        ns="$(arg namespace)"
+        output="screen">
+    <remap from="planned_trajectory" to="/$(arg namespace)/planned_trajectory"/>
+    <remap from="ego_odometry" to="/carla/ego_vehicle/odometry"/>
+    <remap from="trajectory_markers" to="/$(arg namespace)/trajectory_markers"/>
+    <remap from="safety_indicators" to="/$(arg namespace)/safety_indicators"/>
+  </node>
+
+  <!-- local path를 map 프레임으로도 시각화하기 위한 리퍼블리셔 -->
+  <node pkg="bev_planner_integration"
+        type="trajectory_frame_republisher.py"
+        name="trajectory_to_map"
+        output="screen">
+    <param name="source_topic" value="/$(arg namespace)/planned_trajectory"/>
+    <param name="target_topic" value="/$(arg namespace)/planned_trajectory_map"/>
+    <param name="target_frame" value="map"/>
+  </node>
+
+  <!-- RViz (옵션) -->
+  <node if="$(arg rviz)"
+        pkg="rviz"
+        type="rviz"
+        name="rviz"
+        output="screen"/>
+
+  <param name="/use_sim_time" value="false"/>
+</launch> 
