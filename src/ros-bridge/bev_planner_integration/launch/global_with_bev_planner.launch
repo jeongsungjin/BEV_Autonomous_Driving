@@ -19,20 +19,6 @@
     <param name="vehicle_model" value="$(arg vehicle_model)"/>
   </node>
 
-  <!-- 1) Global Path Pure Pursuit 제어 (항상 글로벌 패스 추종) -->
-  <node name="global_path_pure_pursuit"
-        pkg="carla_camera_publisher"
-        type="global_path_pure_pursuit.py"
-        output="screen">
-    <param name="lookahead_distance" value="1.5"/>
-    <param name="max_steer" value="1.2"/>
-    <param name="target_speed" value="6.0"/>
-    <param name="wheelbase" value="2.8"/>
-    <param name="path_file" value="$(arg path_file)"/>
-    <!-- 스크립트 내부가 waypoints_file 파라미터를 읽으므로 함께 전달 -->
-    <param name="waypoints_file" value="$(arg path_file)"/>
-  </node>
-
   <!-- 2) 기존 ego_vehicle에 탑다운 카메라 부착 + Odom/TF/CameraInfo 퍼블리시 -->
   <node name="attach_topdown_camera"
         pkg="carla_camera_publisher"
@@ -55,9 +41,24 @@
         output="screen">
     <param name="save_bev" value="false"/>
     <param name="debug" value="$(arg debug)"/>
-    <param name="da_thresh" value="0.7"/>
-    <param name="ll_thresh" value="0.7"/>
+    <param name="da_thresh" value="0.5"/>
+    <param name="ll_thresh" value="0.5"/>
   </node>
+  
+  <!-- 1) Global Path Pure Pursuit 제어 (항상 글로벌 패스 추종) -->
+  <node name="global_path_pure_pursuit"
+        pkg="carla_camera_publisher"
+        type="global_path_pure_pursuit.py"
+        output="screen">
+    <param name="lookahead_distance" value="1.5"/>
+    <param name="max_steer" value="1.2"/>
+    <param name="target_speed" value="6.0"/>
+    <param name="wheelbase" value="2.8"/>
+    <param name="path_file" value="$(arg path_file)"/>
+    <!-- 스크립트 내부가 waypoints_file 파라미터를 읽으므로 함께 전달 -->
+    <param name="waypoints_file" value="$(arg path_file)"/>
+  </node>
+
 
   <!-- 2) BEV-Planner (local path 계획) -->
   <node pkg="bev_planner_integration"
